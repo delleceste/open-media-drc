@@ -100,6 +100,10 @@ CARD_FIELDS = ("id", "title", "version", "artist", "composer", "label", "label_i
 _lock = threading.Lock()
 _job = {"running": False, "items": [], "detail": "", "error": "", "finished": 0}
 _cancel = threading.Event()
+# A recommendation not on Qobuz yet, or only as a one-track advance single, is looked
+# up again when its month is shown, at most once a day: the album often follows.
+REMATCH_AFTER = 24 * 3600
+_refreshing: dict[str, int] = {}          # month -> recommendations being looked up again
 
 
 class MagazineError(QobuzError):
@@ -706,11 +710,71 @@ def rematch(root: Path, key: str, catalog) -> int:
             if isinstance(pick, dict):
                 pick["query"] = _query(pick)
                 pick["qobuz"] = find_on_qobuz(catalog, pick, int(key[:4]))
+                pick["matched_at"] = int(time.time())
                 found += bool(pick["qobuz"])
         issue.pop("month_key", None)
         qobuz_ai._write_json(_month_dir(root, key) / f"{issue['slug']}.json", issue)
     write_document(root, key)
     return found
+
+
+def _incomplete(pick: dict, now: float) -> bool:
+    card = pick.get("qobuz") or {}
+    missing = not card.get("id") or card.get("tracks") == 1 or not card.get("image")
+    return missing and now - (pick.get("matched_at") or 0) >= REMATCH_AFTER
+
+
+def refresh_matches(root: Path, key: str, catalog_fn) -> int:
+    """Look up again, in the background, this month's recommendations Qobuz did not
+    have whole a day or more ago.  Returns how many are being looked up (0: none)."""
+    now = time.time()
+    with _lock:
+        if key in _refreshing:
+            return _refreshing[key]
+        if _job["running"]:
+            return 0                     # the reading job writes these files meanwhile
+        pending = sum(_incomplete(p, now) for i in issues(root, key) for p in i["picks"] if isinstance(p, dict))
+        if not pending:
+            return 0
+        _refreshing[key] = pending
+    threading.Thread(target=_refresh, args=(root, key, catalog_fn), name="magazines-rematch", daemon=True).start()
+    return pending
+
+
+def _refresh(root: Path, key: str, catalog_fn):
+    try:
+        catalog, changed = catalog_fn(), False
+        for issue in issues(root, key):
+            found = {}
+            for index, pick in enumerate(issue["picks"]):
+                if isinstance(pick, dict) and _incomplete(pick, time.time()):
+                    found[index] = find_on_qobuz(catalog, pick, int(key[:4]))
+            if not found:
+                continue
+            path = _month_dir(root, key) / f"{issue['slug']}.json"
+            with _lock:
+                try:
+                    current = json.loads(path.read_text())
+                except (OSError, ValueError):
+                    continue
+                if current.get("read_at") != issue.get("read_at"):
+                    continue             # read again meanwhile: its own lookups are newer
+                for index, card in found.items():
+                    pick = current["picks"][index]
+                    old = pick.get("qobuz") or {}
+                    if card or not old.get("id"):
+                        pick["qobuz"] = card
+                    changed |= (card or {}).get("id") != old.get("id")
+                    pick["matched_at"] = int(time.time())
+                qobuz_ai._write_json(path, current)
+        if changed:
+            write_document(root, key)
+            _log(f"{key}: Qobuz lookups refreshed")
+    except Exception as error:           # noqa: BLE001 - a lookup is retried the next day
+        _log(f"{key}: Qobuz lookups failed: {error!r}")
+    finally:
+        with _lock:
+            _refreshing.pop(key, None)
 
 
 # ── the job ──────────────────────────────────────────────────────────────────
@@ -854,6 +918,7 @@ def read_issue(root: Path, cfg, path: Path, catalog_fn, cancel=None, post=None, 
         say(f"Finding the recordings on Qobuz, {n} of {len(picks)}")
         pick["query"] = _query(pick)
         pick["qobuz"] = find_on_qobuz(catalog, pick, issue["year"])
+        pick["matched_at"] = int(time.time())
     if issue["month"]:
         key = _month_key(issue["year"], issue["month"])
         folder = _month_dir(root, key)

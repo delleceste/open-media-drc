@@ -222,6 +222,42 @@ class ReadingTest(unittest.TestCase):
         with self.assertRaises(mags.MagazineError):
             mags.pdf_path(self.root, "../../etc", "passwd")
 
+    def test_albums_missing_a_day_ago_are_looked_up_again(self):
+        day = mags.REMATCH_AFTER
+        single = {"id": "s1", "title": "Symphony No. 8: I. Adagio", "tracks": 1, "image": "i.jpg"}
+        whole = {"id": "a1", "title": "Shostakovich: Symphony No. 8", "artist": "Alain Altinoglu", "tracks": 5,
+                 "image": "c.jpg", "streamable": True}
+        slug = self.write_issue("2026-11", "Gramophone", [
+            pick(works="Symphony No 8", composer="Shostakovich", performers="Frankfurt RSO / Alain Altinoglu",
+                 catalogue="", qobuz=single, matched_at=int(time.time()) - day - 5),
+            pick(works="Nocturnes", composer="Chopin", performers="Pavel Kolesnikov", catalogue="",
+                 qobuz=None, matched_at=int(time.time()) - 60),                 # checked a minute ago
+            pick(works="Goldberg Variations", composer="Bach", performers="Jane Pianist", catalogue="",
+                 qobuz={**whole, "id": "g1", "image": ""}, matched_at=0)])       # no cover: looked up too
+        (self.root / "2026/11" / f"{slug}.json").write_text(json.dumps({
+            **json.loads((self.root / "2026/11" / f"{slug}.json").read_text()), "read_at": 1}))
+        asked = []
+
+        def find(_catalog, p, _year):
+            asked.append(p["works"])
+            return whole if p["works"] == "Symphony No 8" else None
+        with patch.object(mags, "find_on_qobuz", side_effect=find):
+            mags._job["running"] = True
+            self.assertEqual(mags.refresh_matches(self.root, "2026-11", FakeCatalog), 0, "not while a job reads")
+            mags._job["running"] = False
+            self.assertEqual(mags.refresh_matches(self.root, "2026-11", FakeCatalog), 2)
+            for _ in range(200):
+                if "2026-11" not in mags._refreshing:
+                    break
+                time.sleep(.01)
+        self.assertEqual(sorted(asked), ["Goldberg Variations", "Symphony No 8"])
+        picks = json.loads((self.root / "2026/11" / f"{slug}.json").read_text())["picks"]
+        self.assertEqual(picks[0]["qobuz"]["id"], "a1", "the whole album replaces the single")
+        self.assertEqual(picks[2]["qobuz"]["id"], "g1", "a lookup finding nothing keeps what was there")
+        self.assertGreater(picks[2]["matched_at"], 0)
+        self.assertEqual(mags.refresh_matches(self.root, "2026-11", FakeCatalog), 0, "not again the same day")
+        self.assertIn("Shostakovich: Symphony No. 8", (self.root / "2026/11/digest.md").read_text())
+
     def test_same_recording_needs_shared_performers(self):
         a = pick(catalogue="")
         self.assertTrue(mags.same_recording(a, pick(catalogue="", works="Symphonie n° 5 en ut mineur")))

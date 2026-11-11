@@ -106,9 +106,9 @@ M.refresh = async () => {
     const wasRunning = M.d && M.d.job && M.d.job.running;
     M.d = d;
     M.paintHead(); M.paintJob();
-    const sig = JSON.stringify([d.month, d.entries, d.issues]);
+    const sig = JSON.stringify([d.month, d.entries, d.issues, d.refreshing]);
     if (sig !== M.sig || !M.list.firstChild) { M.sig = sig; M.paintList(); }
-    if (d.job.running) M.timer = setTimeout(M.refresh, 2500);
+    if (d.job.running || d.refreshing) M.timer = setTimeout(M.refresh, d.job.running ? 2500 : 4000);
     else if (wasRunning && d.job.error) K.toast(d.job.error, 'error');
 };
 
@@ -168,15 +168,17 @@ M.paintList = () => {
         return;
     }
     const n = d.entries.length;
-    M.info.append(
+    M.info.append(...[
         h('div', { class: 'mag-issues' }, d.issues.map(i => h('button', { type: 'button', class: 'chip mag-issue',
             title: `${i.issue || ''} — ${i.picks} recommendations (tap: open or remove)`,
             onclick: e => M.issueMenu(i, e.currentTarget) }, `${i.magazine} · ${i.picks}`))),
         h('div', { class: 'qz-summary small muted' }, `${d.label}: ${plural(n, 'recommendation')}`
             + (d.agreed ? `, ${d.agreed} agreed by several magazines` : '')),
+        d.refreshing ? h('div', { class: 'small muted mag-refreshing' }, h('span', { class: 'spinner small' }),
+            ` Looking on Qobuz again for ${plural(d.refreshing, 'album')} missing or incomplete a day ago…`) : null,
         h('div', { class: 'mag-legend small muted' },
             M.dot({ quality: 5 }), M.dot({ quality: 7.5 }), M.dot({ quality: 10 }), ' sound quality in the reviews, all good recordings ·',
-            M.dot({ q: true }), ' outstanding'));
+            M.dot({ q: true }), ' outstanding')].filter(Boolean));
     const agreed = d.entries.filter(c => c.mag.agreement > 1), single = d.entries.filter(c => c.mag.agreement === 1);
     if (agreed.length) M.list.append(h('h3', { class: 'mag-section' }, 'Agreed by several magazines'), K.qobuzList(agreed, 'magazines'));
     if (single.length) M.list.append(h('h3', { class: 'mag-section' }, agreed.length ? 'Recommended by one magazine' : 'Recommended'),

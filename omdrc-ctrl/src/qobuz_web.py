@@ -620,6 +620,8 @@ def magazines():
             current = time.strftime("%Y-%m")
             month = current if current in months else (months[0] if months else "")
         view = qobuz_magazines.month_view(root, month) if month else {"month": "", "entries": [], "issues": []}
+        # albums missing a day ago may be on Qobuz now: looked up again in the background
+        view["refreshing"] = qobuz_magazines.refresh_matches(root, month, catalog) if month else 0
         annotate_dr([c for c in view["entries"] if c.get("id")])
         response = jsonify({"ok": True, **view, "months": [{"key": m, "label": qobuz_magazines.month_label(m)}
                                                              for m in months],

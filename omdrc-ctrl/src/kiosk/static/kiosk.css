@@ -1591,3 +1591,5 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .qz-cover.qz-nocover .ticon { width: 45%; height: 45%; }
 .qz-tcover .qz-nocover { position: absolute; inset: 0; }
 .qz-tcover .qz-nocover .ticon { width: 40%; height: 40%; }
+.mag-refreshing { display: flex; align-items: center; gap: .4rem; margin: .1rem 0 .3rem; }
+.mag-refreshing .spinner.small { width: 1rem; height: 1rem; border-width: .15rem; }
