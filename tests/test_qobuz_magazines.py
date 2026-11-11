@@ -301,6 +301,15 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(mags.month_view(self.root, "2026-12")["entries"][0]["mag"]["artistic"], "Both love it.")
         self.assertFalse(any(r["kind"] == "verdicts" for r in mags.export_rows(self.root)), "bee's verdict stays bee's")
 
+    def test_circles_run_green_to_yellow_and_silent_sound_last(self):
+        self.write_issue("2026-10", "Gramophone", [
+            pick(composer="A", performers="Ann One", catalogue="", sound_score=0, award="Editor's Choice", artistic_score=10),
+            pick(composer="B", performers="Bob Two", catalogue="", sound_score=6),
+            pick(composer="C", performers="Cy Three", catalogue="", sound_score=9, sound_exceptional=True),
+            pick(composer="D", performers="Di Four", catalogue="", sound_score=8)])
+        order = [c["mag"]["composer"] for c in mags.month_view(self.root, "2026-10")["entries"]]
+        self.assertEqual(order, ["C", "D", "B", "A"])
+
     def test_same_recording_needs_shared_performers(self):
         a = pick(catalogue="")
         self.assertTrue(mags.same_recording(a, pick(catalogue="", works="Symphonie n° 5 en ut mineur")))

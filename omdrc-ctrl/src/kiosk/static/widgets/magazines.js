@@ -182,7 +182,7 @@ M.paintList = () => {
             ` Looking on Qobuz again for ${plural(d.refreshing, 'album')} missing or incomplete a day ago…`) : null,
         h('div', { class: 'mag-legend small muted' },
             M.dot({ quality: 5 }), M.dot({ quality: 7.5 }), M.dot({ quality: 10 }), ' sound quality in the reviews, all good recordings ·',
-            M.dot({ q: true }), ' outstanding')].filter(Boolean));
+            M.dot({ q: true }), ' outstanding ·', M.dot({ quality: null }), ' sound not described')].filter(Boolean));
     const agreed = d.entries.filter(c => c.mag.agreement > 1), single = d.entries.filter(c => c.mag.agreement === 1);
     if (agreed.length) M.list.append(h('h3', { class: 'mag-section' }, 'Agreed by several magazines'), K.qobuzList(agreed, 'magazines'));
     if (single.length) M.list.append(h('h3', { class: 'mag-section' }, agreed.length ? 'Recommended by one magazine' : 'Recommended'),

@@ -1113,10 +1113,14 @@ def entry(group: list[dict], key: str, verdicts: dict) -> dict:
 
 
 def _rank(card: dict):
+    """Agreement first; then, so the circles run green to yellow, the sound as the reviews
+    rate it (an outstanding Q first, a review silent on the sound last); then awards and
+    the performance's rating; a recording not on Qobuz after the ones that play."""
     m = card["mag"]
     scores = [r["artistic_score"] or 0 for r in m["reviews"]]
-    return (-m["agreement"], -len(m["awards"]), -(sum(scores) / len(scores) + 0.5 * (m["quality"] or 0)),
-            not card.get("id"))
+    quality = m["quality"]
+    return (-m["agreement"], quality is None and not m["q"], not m["q"], -(quality or 0), -len(m["awards"]),
+            -sum(scores) / len(scores), not card.get("id"))
 
 
 def month_view(root: Path, key: str) -> dict:
