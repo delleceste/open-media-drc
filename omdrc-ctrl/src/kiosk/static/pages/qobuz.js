@@ -2639,14 +2639,22 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
     // a tap on the cover opens it full screen
     v.openCover = K.coverOpener(() => v.cover.dataset.src || '',
         { usable: P.seekable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seekTo(s) },
-        () => {
-            const t = P.trackInfo(), album = t ? t.album : null, d = P.now;
-            return {
-                title: (d && d.album) || (album && album.title) || '',
-                facts: [(album && album.label) || (d && d.label), (album && album.year) || (d && d.date || '').slice(0, 4)].filter(Boolean).join(' · '),
-                transport: { playing: () => !!(P.base && P.base.playing), action: a => P.transport(a) },
-            };
-        });
+        () => ({
+            // the track playing, kept current while the cover is open (as on Now): its title,
+            // the performer, the album and the track's place in it; label and year looked up
+            live: () => {
+                const t = P.trackInfo(), album = t ? t.album : null, d = P.now;
+                if (!d) return { title: 'Nothing playing' };
+                const pos = d.pos && d.length ? `track ${d.pos} / ${d.length}` : '';
+                return {
+                    title: d.state === 'stop' && !d.title ? 'Stopped' : d.title || (t && t.title) || '',
+                    artist: d.artist || (t && t.performer) || '',
+                    album: [d.album || (album && album.title), pos].filter(Boolean).join(' · '),
+                    albumId: (album && album.id) || '',
+                };
+            },
+            transport: { playing: () => !!(P.base && P.base.playing), action: a => P.transport(a) },
+        }));
     // Upright, a grabber between the transport and the queue: the place to drag the view above (the sheet with the
     // cover) rather than the queue's list.  A tap goes to the other end: up to the queue, or back down to the cover.
     v.upHandle = h('button', { type: 'button', class: 'qz-up-handle', tabindex: '-1',

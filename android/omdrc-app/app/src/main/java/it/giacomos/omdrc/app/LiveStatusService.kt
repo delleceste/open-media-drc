@@ -59,7 +59,8 @@ private const val TAG = "OmdrcWidget"
  * Android shows the launcher icon itself instead).
  * With the media notification on (the default, AppPrefs.mediaNotification)
  * it is the box's player in Android's media controls, backed by a
- * MediaSession: play/pause, previous/next and seeking for music, play/pause
+ * MediaSession: play/pause, previous/next, 15 s back and forward and seeking
+ * for music, play/pause
  * for a film, and Close. Off, it is a plain notification offering Play or
  * Pause, Levels and Close. Swiping either away is the same as Close.
  * Android requires a foreground service to show it the whole time; its Close
@@ -280,14 +281,33 @@ class LiveStatusService : Service() {
                 override fun onSkipToNext() = send("next")
                 override fun onSkipToPrevious() = send("prev")
                 override fun onSeekTo(pos: Long) = send("seek", pos / 1000.0)
+                override fun onRewind() = seekBy(-SEEK_STEP_S)
+                override fun onFastForward() = seekBy(SEEK_STEP_S)
                 override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
                     when (action) {
+                        CUSTOM_SEEK_BACK -> seekBy(-SEEK_STEP_S)
+                        CUSTOM_SEEK_FORWARD -> seekBy(SEEK_STEP_S)
                         CUSTOM_CLOSE -> close()
                         CUSTOM_STOP -> send("stop")
                     }
                 }
             }, Handler(Looper.getMainLooper()))
         }
+    }
+
+    /** Back or forward within the track: from where the session's state says
+     *  playback is now (its last position, run on while playing), kept
+     *  inside the track. */
+    private fun seekBy(seconds: Double) {
+        val controller = session?.controller ?: return
+        val state = controller.playbackState ?: return
+        if (state.position == PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN) return
+        val ran = if (state.state == PlaybackStateCompat.STATE_PLAYING)
+            (SystemClock.elapsedRealtime() - state.lastPositionUpdateTime) * state.playbackSpeed else 0f
+        val duration = controller.metadata?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION)?.takeIf { it > 0 }
+        val target = ((state.position + ran) / 1000.0 + seconds).coerceAtLeast(0.0)
+            .let { if (duration != null) it.coerceAtMost(duration / 1000.0 - 1) else it }
+        send("seek", target)
     }
 
     private fun releaseSession() {
@@ -598,7 +618,8 @@ class LiveStatusService : Service() {
         }
         if (music) {
             actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-            if (duration != null) actions = actions or PlaybackStateCompat.ACTION_SEEK_TO
+            if (duration != null) actions = actions or PlaybackStateCompat.ACTION_SEEK_TO or
+                PlaybackStateCompat.ACTION_REWIND or PlaybackStateCompat.ACTION_FAST_FORWARD
         }
         val position = now?.music?.elapsed?.takeIf { music }?.let { (it * 1000).toLong() }
             ?: PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN
@@ -608,6 +629,20 @@ class LiveStatusService : Service() {
                 .setState(state, position, if (state == PlaybackStateCompat.STATE_PLAYING) 1f else 0f,
                     SystemClock.elapsedRealtime())
                 .apply {
+                    // Android's media controls show the first two custom buttons beside
+                    // previous / play / next: back and forward within the track come first
+                    if (music && duration != null) {
+                        addCustomAction(
+                            PlaybackStateCompat.CustomAction.Builder(
+                                CUSTOM_SEEK_BACK, getString(R.string.live_seek_back), R.drawable.ic_seek_back,
+                            ).build(),
+                        )
+                        addCustomAction(
+                            PlaybackStateCompat.CustomAction.Builder(
+                                CUSTOM_SEEK_FORWARD, getString(R.string.live_seek_forward), R.drawable.ic_seek_forward,
+                            ).build(),
+                        )
+                    }
                     if (playPause != null) {
                         addCustomAction(
                             PlaybackStateCompat.CustomAction.Builder(
@@ -719,6 +754,9 @@ class LiveStatusService : Service() {
         private const val ACTION_TRANSPORT = "it.giacomos.omdrc.app.ACTION_LIVE_TRANSPORT"
         private const val CUSTOM_CLOSE = "close"
         private const val CUSTOM_STOP = "stop"
+        private const val CUSTOM_SEEK_BACK = "seek_back"
+        private const val CUSTOM_SEEK_FORWARD = "seek_forward"
+        private const val SEEK_STEP_S = 15.0
         private val VIDEO_ACTIONS = setOf("play", "pause", "stop")
         private const val STOP_CLOSE_MS = 5 * 1000L
         private const val EXTRA_TRANSPORT_ACTION = "transportAction"
