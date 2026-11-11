@@ -1508,3 +1508,14 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .bk-section .kv { flex-direction: column; gap: .1rem; }
 .bk-section .kv .k { font-size: .78rem; }
 .bk-section .kv .v { text-align: left; }
+
+/* the full player, upright, scrolled past the cover: a grabber over the transport (pages/qobuz.js, v.upHandle) */
+.qz-up-handle { display: none; }
+@media (orientation: portrait) {
+    .qz-up-handle { display: flex; align-items: center; justify-content: center; gap: .6rem; width: 100%;
+        height: 1.6rem; padding: 0; border: 0; border-bottom: 1px solid var(--border); background: none;
+        color: var(--muted); font: inherit; font-size: .72rem; letter-spacing: .04em;
+        opacity: 0; pointer-events: none; transition: opacity .2s; touch-action: pan-y; }
+    .qz-up-handle i { width: 2.6rem; height: .25rem; border-radius: .15rem; background: var(--muted); }
+    .qz-full.qz-scrolled .qz-up-handle { opacity: 1; pointer-events: auto; }
+}

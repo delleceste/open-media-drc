@@ -2605,6 +2605,12 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
                 transport: { playing: () => !!(P.base && P.base.playing), action: a => P.transport(a) },
             };
         });
+    // Upright, once the sheet has scrolled the cover away, a grabber above the transport says the view above can
+    // come back: drag it down (it is part of the sheet, so the sheet scrolls), or tap it.
+    v.upHandle = h('button', { type: 'button', class: 'qz-up-handle', tabindex: '-1',
+        title: 'Back to the cover', 'aria-label': 'Scroll back to the cover',
+        onclick: () => P.fullEl && P.fullEl.scrollTo({ top: 0, behavior: 'smooth' }) },
+        h('i', { 'aria-hidden': 'true' }), h('span', {}, '▾ Cover'));
     P.fullEl = h('div', { class: 'scrim qz-full' },
         v.grip = h('div', { class: 'qz-grip', role: 'button', tabindex: '0', title: 'Swipe down or tap to close',
             'aria-label': 'Close the player' }, h('i')),
@@ -2616,7 +2622,7 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
             v.cover,
             h('div', { class: 'qz-full-side' },
                 h('div', { class: 'qz-full-info' }, v.title, v.work, v.sub, v.awards = h('div', {}), v.detail),
-                v.seekRow, v.buttons, P.queueTools, P.queueBox)));
+                v.seekRow, v.upHandle, v.buttons, P.queueTools, P.queueBox)));
     // Keep the playing album's details beside the queue actions.
     v.infoBtn = h('button', { type: 'button', class: 'btn qz-finfo', hidden: true, onclick: () => {
         const t = P.trackInfo();
@@ -2733,7 +2739,8 @@ P.sizeQueue = () => {
     const box = P.queueBox;
     if (!matchMedia('(orientation: portrait)').matches) { box.style.height = ''; P.syncQueueScroll(); return; }
     const bottom = parseFloat(getComputedStyle(P.fullEl).paddingBottom) || 0;
-    const controls = P.fullView.buttons.getBoundingClientRect();
+    // the transport and the grabber over it reach the sheet's top edge
+    const controls = P.fullView.upHandle.getBoundingClientRect();
     const queue = box.getBoundingClientRect();
     const room = Math.max(64, P.fullEl.clientHeight - (queue.top - controls.top) - bottom);
     const first = box.firstElementChild, last = box.lastElementChild;
@@ -2752,6 +2759,7 @@ P.syncQueueScroll = () => {
     const upright = matchMedia('(orientation: portrait)').matches;
     const up = sheet.scrollTop >= sheet.scrollHeight - sheet.clientHeight - 1;
     P.queueBox.classList.toggle('qz-queue-held', upright && !up);
+    sheet.classList.toggle('qz-scrolled', upright && sheet.scrollTop > 40);
 };
 
 // A vertical swipe on the cover scrolls as a swipe anywhere else on the sheet:
