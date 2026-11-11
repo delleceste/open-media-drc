@@ -1593,3 +1593,9 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .qz-tcover .qz-nocover .ticon { width: 40%; height: 40%; }
 .mag-refreshing { display: flex; align-items: center; gap: .4rem; margin: .1rem 0 .3rem; }
 .mag-refreshing .spinner.small { width: 1rem; height: 1rem; border-width: .15rem; }
+/* the view chips stay on one line beside the list/grid button: they narrow evenly
+   when the row is short (a phone, a large system font) rather than wrapping */
+.qz-viewchips { flex-wrap: nowrap; flex: 1 1 auto; min-width: 0; gap: .35rem; }
+.qz-viewchips .chip.qz-chip { flex: 0 1 2.8rem; min-width: 2.15rem; padding: 0; justify-content: center; }
+.qz-viewchips .chip.qz-chip .ticon { width: 1.25rem; height: 1.25rem; flex: none; }
+.chip.qz-layout { flex: none; }

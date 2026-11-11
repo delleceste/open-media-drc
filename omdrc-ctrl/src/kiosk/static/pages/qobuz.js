@@ -160,7 +160,7 @@ P.mount = el => {
     // that it is up there.
     P.viewChips = h('div', { class: 'qz-viewchips' },
         // Results in words; the others as icons (a clock, Qobuz's Discover compass, the award cup)
-        [['results', 'Results'], ['recent', 'Recent', 'clock'], ['discover', 'Discover', 'compass'], ['awarded', 'Awarded', 'trophy']].map(([x, name, icon]) =>
+        [['results', 'Search results', 'search'], ['recent', 'Recent', 'clock'], ['discover', 'Discover', 'compass'], ['awarded', 'Awarded', 'trophy']].map(([x, name, icon]) =>
             h('button', { type: 'button', class: 'chip tog qz-chip' + (icon ? ' qz-viewicon' : ''), dataset: { view: x },
                 title: name, 'aria-label': name, onclick: () => P.setView(x, true) }, icon ? K.tIcon(icon) : name)),
         h('button', { type: 'button', class: 'chip tog qz-chip qz-library-shortcut',
