@@ -1258,6 +1258,12 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 }
 
 .qz-queue-tools { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+/* Queue ▾, Details › and Booklet: one height, as small as a chip */
+.qz-queue-tools > .btn, .qz-queue-tools .btn.qz-finfo, .qz-queue-tools .bk-split .chip {
+    box-sizing: border-box; height: 1.75rem; min-height: 0; margin: 0; font-size: .8rem; }
+.qz-queue-tools > .btn, .qz-queue-tools .btn.qz-finfo, .qz-queue-tools .chip.bk-open { padding: 0 .6rem; }
+.qz-queue-tools > .btn.lbl { font-size: .75rem; }
+.qz-queue-tools .btn.qz-finfo { align-self: center; }
 .qz-qrow { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .qz-qrow.qz-removing { background: rgba(248,81,73,.2); }
 
