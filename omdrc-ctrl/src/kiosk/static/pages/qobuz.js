@@ -2337,6 +2337,7 @@ P.tile = (c, where = '') => {
             c.mag ? K.magazines.marks(c.mag) : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-tsub muted' }, c.artist || ''),
+        c.mag ? K.magazines.awardLine(c.mag) : null,
         sub ? h('div', { class: 'qz-tsub muted' }, c.year || '', c.year && c.label ? ' · ' : '', P.labelLink(c)) : null);
     // the press: held still for LONG_PRESS_MS; a move (a scroll, a page swipe) ends it
     let timer = null, start = null, held = false;

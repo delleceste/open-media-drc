@@ -67,6 +67,14 @@ M.summary = m => {
             : others.length ? h('span', { class: 'chip mag-award', title: others.join('\n') }, awardName(others[0])
                 + (others.length > 1 ? ` +${others.length - 1}` : '')) : null);
 };
+// A grid tile's line (pages/qobuz.js P.tile): the top award, else the first other one.
+M.awardLine = m => {
+    const top = m.top || [], others = m.awards.filter(a => !top.includes(a));
+    if (!top.length && !others.length) return null;
+    const all = top.length ? top : others;
+    return h('div', { class: 'qz-tsub mag-taward' + (top.length ? ' top' : ''), title: m.awards.join('\n') },
+        (top.length ? '🏆 ' : '') + awardName(all[0]) + (all.length > 1 ? ` +${all.length - 1}` : ''));
+};
 M.block = (c, { open = false, badges = true } = {}) => {
     const m = c.mag;
     const reviews = h('div', { class: 'mag-reviews', hidden: !open }, m.reviews.map(r => h('div', { class: 'mag-review' },

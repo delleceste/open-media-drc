@@ -1570,6 +1570,8 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .qz-tile .qz-tq + .qz-tagree, .qz-tcover:has(.qz-tq) .qz-tagree { bottom: 1.45rem; }
 
 .mag-summary { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem; margin-top: .2rem; }
+.qz-tsub.mag-taward { color: var(--warn-text); }
+.qz-tsub.mag-taward.top { color: #d4a017; font-weight: 700; }
 .mag-summary { flex-wrap: nowrap; min-width: 0; }
 .mag-summary .chip { min-height: 1.3rem; font-size: .72rem; padding: 0 .45rem; white-space: nowrap; }
 .mag-summary .chip.mag-top, .mag-summary .chip.mag-award { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: 1.3rem; }
