@@ -42,6 +42,8 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     POST /qobuz/magazines/remove   {"upload": name} | {"month", "slug"}
     GET /qobuz/magazines/document?month=   the month's document (Markdown)
     GET /qobuz/magazines/pdf?month=&slug=  an issue's PDF
+    GET /qobuz/magazines/badges    {album id: badge}: the magazines' marks and
+                                   awards on every list (search, chronology, ...)
     GET /qobuz/lowered             albums, labels and artists moved to the end
     POST /qobuz/lowered            {"action": "add", "kind", "key", "name"} |
                                    {"action": "remove", "kind", "key"} |
@@ -640,6 +642,18 @@ def magazines():
                             "job": qobuz_magazines.status(root), "folder": str(root)})
         response.headers["Cache-Control"] = "no-store"
         return response
+    except (QobuzError, OSError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/magazines/badges")
+def magazine_badges():
+    """{qobuz album id: badge} for every album a magazine recommends (the other lists)."""
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        return jsonify({"ok": True, "badges": qobuz_magazines.badges(_magazine_root())})
     except (QobuzError, OSError) as error:
         return jsonify({"ok": False, "error": str(error)}), 400
 

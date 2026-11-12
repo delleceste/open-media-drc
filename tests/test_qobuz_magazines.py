@@ -334,6 +334,17 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(view["top"], 2)
         self.assertIn("top award", mags.document(self.root, "2026-10"))
 
+    def test_badges_index_every_album_found_by_its_qobuz_id(self):
+        qobuz = {"id": "q9", "title": "Lieder", "artist": "Hasselhorn", "streamable": True}
+        self.write_issue("2026-10", "Diapason", [pick(qobuz=qobuz, award="Diapason d'or"),
+                                                 pick(composer="Z", performers="Zed", catalogue="")])
+        index = mags.badges(self.root)
+        self.assertEqual(list(index), ["q9"], "a pick not found on Qobuz has no badge")
+        self.assertEqual((index["q9"]["marks"], index["q9"]["top_marks"], index["q9"]["month"]), (["D"], ["D"], "2026-10"))
+        self.assertIs(mags.badges(self.root), index, "kept while nothing changed")
+        self.write_issue("2026-10", "Gramophone", [pick(qobuz=qobuz)])
+        self.assertEqual(mags.badges(self.root)["q9"]["agreement"], 2, "a new issue is seen")
+
     def test_a_summer_issue_covers_july_and_august(self):
         slug = self.write_issue("2026-07", "Diapason", [pick(award="Diapason d'or")])
         path = self.root / "2026/07" / f"{slug}.json"

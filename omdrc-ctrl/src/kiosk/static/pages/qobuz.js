@@ -330,6 +330,7 @@ P.show = () => {
     P.resHead.hidden = !P.fromNowShown;
     P.viewRow.hidden = P.fromNowShown;
     P.paintScope();
+    K.magazines.loadBadges();
     if (P.fromNowShown) P.setView('results');
     else if (P.view() === 'recent') P.recent();
     else if (P.view() === 'discover') P.discover(0, { keep: true });
@@ -501,7 +502,8 @@ P.setLayout = v => {
     });
 };
 P.list = (cards, where = '') => h('div', { class: 'qz-list' + (P.grid() ? ' qz-grid' : '') }, cards.map(c => P.item(c, where)));
-P.item = (c, where = '') => P.grid() ? P.tile(c, where) : P.row(c, where);
+// an album a magazine recommends gets its marks and award in every list (widgets/magazines.js)
+P.item = (c, where = '') => K.magazines.decorate(P.grid() ? P.tile(c, where) : P.row(c, where), c);
 
 // ── where the search box is ──────────────────────────────────────────────────
 // One search box (field, completions, filters), in one place at a time: at the

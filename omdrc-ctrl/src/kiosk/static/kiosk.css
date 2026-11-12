@@ -1561,10 +1561,16 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .mag-dot { --mag-hue: 90; display: inline-flex; align-items: center; justify-content: center; flex: none;
     width: .95rem; height: .95rem; border-radius: 50%; background: hsl(var(--mag-hue) 72% 46%);
     box-shadow: 0 0 0 1px rgba(0,0,0,.25) inset; vertical-align: middle; }
-.mag-dot.mag-q { width: 1.25rem; height: 1.25rem; background: hsl(var(--mag-hue) 68% 36%); color: #fff;
-    font-size: .78rem; font-weight: 800; line-height: 1; box-shadow: 0 0 0 2px hsl(var(--mag-hue) 60% 60% / .55); }
+/* the Q: a bold, round green letter; a dark halo under it on a cover */
+.mag-qmark { display: inline-flex; flex: none; width: 1.3rem; height: 1.3rem; vertical-align: middle; color: #2fbf4a; }
+.mag-qmark svg { width: 100%; height: 100%; overflow: visible; }
+.mag-qmark g { fill: none; stroke-linecap: round; }
+.mag-qmark .q-ink { stroke: currentColor; stroke-width: 3.6; }
+.mag-qmark .q-halo { stroke: transparent; stroke-width: 6.4; }
+.qz-tmag.mag-qmark .q-halo, .qz-cover-wrap .mag-qmark .q-halo { stroke: rgba(0,0,0,.6); }
+:root[data-theme="light"] .mag-qmark { color: #1f9a38; }
 .qz-tmag { position: absolute; top: .3rem; left: .3rem; box-shadow: 0 0 0 2px rgba(0,0,0,.45); }
-.qz-tmag.mag-q { box-shadow: 0 0 0 2px rgba(0,0,0,.45); }
+.qz-tmag.mag-qmark { box-shadow: none; width: 1.5rem; height: 1.5rem; top: .2rem; left: .2rem; }
 .qz-tagree { position: absolute; bottom: .25rem; right: .25rem; font-size: .7rem; font-weight: 700; line-height: 1;
     padding: .2rem .3rem; border-radius: .3rem; background: var(--green); color: #fff; }
 .qz-tile .qz-tq + .qz-tagree, .qz-tcover:has(.qz-tq) .qz-tagree { bottom: 1.45rem; }

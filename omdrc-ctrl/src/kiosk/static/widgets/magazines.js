@@ -22,15 +22,35 @@ const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 // Yellow (hue 52) at a sound rating of 5 or below, green (hue 130) at 10, every shade
 // between; no rating: a hollow ring.  An outstanding recording: a green Q.
 M.hue = q => 52 + Math.max(0, Math.min(1, (q - 5) / 5)) * 78;
+// The Q: a bold, round green letter drawn in SVG (the same on every device), a dark halo
+// under it where it sits on a cover.
+const NS = 'http://www.w3.org/2000/svg';
+M.qGlyph = () => {
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const cls of ['q-halo', 'q-ink']) {
+        const g = document.createElementNS(NS, 'g');
+        g.setAttribute('class', cls);
+        const ring = document.createElementNS(NS, 'circle');
+        Object.entries({ cx: 11.5, cy: 11, r: 7.2 }).forEach(([k, v]) => ring.setAttribute(k, v));
+        const tail = document.createElementNS(NS, 'path');
+        tail.setAttribute('d', 'M14.2 14.4 L19.6 20');
+        g.append(ring, tail);
+        svg.append(g);
+    }
+    return svg;
+};
 M.dot = (m, cls = '') => {
     if (!m) return null;
     // always a colour: the sound's rating when a review describes it, else the performance's
     const rating = m.rating ?? m.quality ?? 7;
     const basis = m.rating_basis === 'performance' ? 'Performance' : 'Recording quality';
     const title = `${basis} ${rating}/10 in the reviews` + (m.q ? ' · Q: the recording is singled out' : '');
-    const el = h('span', { class: 'mag-dot' + (m.q ? ' mag-q' : '') + (cls ? ' ' + cls : ''),
-        title, 'aria-label': title, role: 'img' }, m.q ? 'Q' : '');
-    el.style.setProperty('--mag-hue', M.hue(rating));
+    const el = h('span', { class: (m.q ? 'mag-qmark' : 'mag-dot') + (cls ? ' ' + cls : ''),
+        title, 'aria-label': title, role: 'img' });
+    if (m.q) el.append(M.qGlyph());
+    else el.style.setProperty('--mag-hue', M.hue(rating));
     return el;
 };
 
@@ -118,6 +138,34 @@ M.sheet = (c, actions) => {
                 ] : h('button', { type: 'button', class: 'btn primary', onclick: run(() => M.find(c)) }, K.tIcon('search'), ' Search Qobuz'))));
     document.getElementById('overlay-root').append(scrim);
 };
+// ── the badges on every other list (search, chronology, discover, ...) ────────
+// Every album a magazine recommends, by its Qobuz id; a row or tile of one of them gets
+// the magazines' letters on its cover and the award line (pages/qobuz.js P.item).
+M.index = {};
+M.loadBadges = async () => {
+    const d = await K.api('/qobuz/magazines/badges', { timeout: 30000 });
+    if (!d || !d.ok) return;
+    M.index = d.badges || {};
+    document.querySelectorAll('.qz-row, .qz-tile').forEach(el => el.__card && M.decorate(el, el.__card));
+};
+M.decorate = (el, c) => {
+    const m = !c.mag && c.id && M.index[c.id];
+    if (!m || el.__magDecorated) return el;
+    el.__magDecorated = true;
+    if (el.classList.contains('qz-tile')) {
+        const cover = el.querySelector('.qz-tcover');
+        if (cover) cover.append(M.dot(m, 'qz-tmag'), M.marks(m),
+            m.agreement > 1 ? h('span', { class: 'qz-tagree', title: m.magazines.join(', ') }, `×${m.agreement}`) : '');
+        const subs = el.querySelectorAll('.qz-tsub'), line = M.awardLine(m);
+        if (line && subs[0]) subs[0].after(line);
+    } else {
+        const cover = el.querySelector('.qz-cover-wrap'), artist = el.querySelector('.qz-artist');
+        if (cover) cover.append(M.marks(m));
+        if (artist) artist.after(M.summary(m));
+    }
+    return el;
+};
+
 M.find = c => K.qobuzFind && K.qobuzFind(c.mag.query || [c.artist, c.title].filter(Boolean).join(' '));
 M.openPdf = (month, slug, page = 0) => K.openExternal(abs('/qobuz/magazines/pdf?' + new URLSearchParams({ month, slug }))
     + (page ? `#page=${page}` : ''));
@@ -132,6 +180,7 @@ M.mount = el => {
     M.info = h('div', { class: 'mag-info' });
     M.list = h('div', { class: 'mag-list' });
     el.append(M.file, M.head, M.job, M.info, M.list);
+    M.loadBadges();
 };
 M.show = () => { M.visible = true; M.refresh(); };
 M.hide = () => { M.visible = false; clearTimeout(M.timer); M.closeMenu(); };
@@ -149,6 +198,7 @@ M.refresh = async () => {
     if (sig !== M.sig || !M.list.firstChild) { M.sig = sig; M.paintList(); }
     if (d.job.running || d.refreshing) M.timer = setTimeout(M.refresh, d.job.running ? 2500 : 4000);
     else if (wasRunning && d.job.error) K.toast(d.job.error, 'error');
+    if (wasRunning && !d.job.running) M.loadBadges();      // a new issue's albums: badged everywhere
 };
 
 M.paintHead = () => {

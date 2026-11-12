@@ -1227,6 +1227,52 @@ def month_view(root: Path, key: str) -> dict:
             "top": sum(1 for c in cards if c["mag"]["agreement"] == 1 and c["mag"]["top_marks"])}
 
 
+# Every album a magazine recommends, by its Qobuz id: the badges the other lists show
+# (search, chronology, discover).  Kept until an issue, a verdict or a shared row changes.
+_badges_cache: dict = {"sig": None, "index": {}}
+BADGE_FIELDS = ("agreement", "magazines", "marks", "awards", "top", "top_marks", "rating",
+                "rating_basis", "quality", "q")
+
+
+def _badges_signature(root: Path) -> tuple:
+    files = []
+    for path in root.glob("[0-9][0-9][0-9][0-9]/[0-1][0-9]/*.json"):
+        try:
+            files.append((str(path), path.stat().st_mtime_ns))
+        except OSError:
+            continue
+    shared = []
+    folder = _share["dir"]
+    if folder and os.path.isdir(folder):
+        for name in os.listdir(folder):
+            try:
+                shared.append((name, os.stat(os.path.join(folder, name)).st_mtime_ns))
+            except OSError:
+                continue
+    return tuple(sorted(files)), tuple(sorted(shared))
+
+
+def badges(root: Path) -> dict:
+    """{qobuz album id: the magazines' badge}: where several months show the same album,
+    the one most magazines agree on (then the one with a top award, then the latest)."""
+    sig = _badges_signature(root)
+    if sig == _badges_cache["sig"]:
+        return _badges_cache["index"]
+    index: dict = {}
+    for key in months(root):
+        for group in clusters(root, key):
+            card = entry(group, key, {})
+            if not card.get("id"):
+                continue
+            m = card["mag"]
+            badge = {k: m[k] for k in BADGE_FIELDS} | {"month": key}
+            old = index.get(str(card["id"]))
+            if not old or (badge["agreement"], len(badge["top_marks"])) > (old["agreement"], len(old["top_marks"])):
+                index[str(card["id"])] = badge
+    _badges_cache.update(sig=sig, index=index)
+    return index
+
+
 def consensus(root: Path, cfg, key: str, cancel=None, post=None) -> None:
     """A shared English verdict for each recording more than one magazine recommends;
     kept by the set of reviews it was made from, so it is asked for once."""
