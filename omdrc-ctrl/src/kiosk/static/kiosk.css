@@ -1302,11 +1302,13 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 .now-title.reading > span { width: max-content; min-width: 100%; overflow: visible; text-overflow: clip; }
 .now .dr-value, .now .now-side.single .dr-value { font-size: 1.5rem; }
 @media (orientation: portrait) {
-    .now .now-track { grid-template-rows: auto auto auto auto; grid-template-areas: "art meta" "art led" "title title" "time time"; }
+    /* the title straight under the cover, beside the chips when they run longer than it;
+       the flexible row takes whatever height the chips need beyond cover and title */
+    .now .now-track { grid-template-rows: auto auto 1fr auto; grid-template-areas: "art meta" "title meta" "led meta" "time time"; }
     .now.roomy .now-track { grid-template-areas: "art" "title" "meta" "led" "time"; }
     .now.cover-big .now-track { grid-template-areas: "meta" "led" "title" "time"; }
     .now.idle .now-track { grid-template-areas: "title" "meta" "led"; }
-    .now-track > .now-title { grid-area: title; }
+    .now-track > .now-title { grid-area: title; align-self: start; }
 }
 
 .now-drthermo { flex: 1 1 2rem; min-width: 2rem; align-self: center; margin-bottom: .4rem; }
