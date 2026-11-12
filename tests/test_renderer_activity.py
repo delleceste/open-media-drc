@@ -113,6 +113,10 @@ class UpmpdcliStatusTest(unittest.TestCase):
         self.assertEqual(got["line1"], "[playing] Nutshell (Live) · Unplugged")
         self.assertNotIn("Producer", got["line1"])
         self.assertNotIn("Lyricist", got["line1"])
+        self.assertEqual(got["artist"], "Alice In Chains")
+        with patch.object(APP, "_mpd_now_playing_via_protocol",
+                          return_value={**now, "album_artist": "Alice in Chains"}):
+            self.assertEqual(APP._upmpdcli_qconnect_status()["artist"], "Alice in Chains")
 
     def test_a_local_file_gets_the_local_library_cover(self):
         # No DIDL cover for a file from MPD's own library: the card points at

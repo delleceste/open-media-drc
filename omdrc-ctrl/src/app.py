@@ -4783,6 +4783,16 @@ def _loaded_album_art(np: dict, url: str = "") -> str:
         return ""
 
 
+def _headline_artist(np: dict) -> str:
+    """One artist for the card: the album artist, else the Artist tag up to its
+    first comma -- UPnP services stuff every contributor and role into that tag
+    (see _upmpdcli_qconnect_status), the lead artist comes first."""
+    artist = (np.get("album_artist") or "").strip()
+    if artist:
+        return artist
+    return (np.get("artist") or "").split(", ")[0].strip()
+
+
 def _local_file_art(np: dict) -> str:
     """The cover of a local library file MPD is playing (not a renderer's
     stream): the folder's or the file's art, else the album's on Qobuz -- the
@@ -4834,6 +4844,7 @@ def _upmpdcli_qconnect_status() -> dict:
     meta = _upmpdcli_didl_meta(np.get("file", ""))
     art_url = _loaded_album_art(np, meta.get("art", ""))
     return {"line1": line1, "line2": line2, "state": "", "events": [],
+            "artist": _headline_artist(np) if line1 else "",
             "elapsed": np["elapsed"], "duration": np["duration"],
             "playback_state": np["state"],
             # Served by this panel rather than linked: see _fetch_art. The
@@ -4870,6 +4881,7 @@ def qconnect_status():
             track_album = " · ".join(part for part in (np.get("title", ""), np.get("album", "")) if part)
             status["line1"] = f"[stopped] {track_album}" if track_album else ""
             status["playback_state"] = "stop"
+            status["artist"] = _headline_artist(np)
         status["qobuz_album"] = _qobuz_album_of(art_url)
         if art_url:
             status["art"] = "/qconnect/art?v=" + hashlib.sha1(art_url.encode()).hexdigest()[:10]
@@ -4889,6 +4901,7 @@ def qconnect_status():
             track_album = " · ".join(part for part in (np.get("title", ""), np.get("album", "")) if part)
             return jsonify({"ok": True, **_QC_STATUS_EMPTY,
                             "line1": f"[stopped] {track_album}" if track_album else "",
+                            "artist": _headline_artist(np),
                             "playback_state": "stop",
                             "art": "/qconnect/art?v=" + hashlib.sha1(art_url.encode()).hexdigest()[:10],
                             "qobuz_album": _qobuz_album_of(art_url)})

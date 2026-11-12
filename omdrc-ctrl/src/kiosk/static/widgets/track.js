@@ -22,6 +22,8 @@ K.fetchTrack = async () => {
     const parsed = q && q.ok ? parseLine1(q.line1) : null;
     if (parsed) {
         const state = q.playback_state === 'play' ? 'play' : q.playback_state === 'pause' ? 'pause' : 'stop';
+        // upmpdcli's line1 is "title · album": the artist travels on its own
+        if (!parsed.artist && q.artist) parsed.artist = String(q.artist);
         return {
             ok: true, from: 'renderer', ...parsed,
             edition: q.edition || '',
