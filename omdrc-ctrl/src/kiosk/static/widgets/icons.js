@@ -33,6 +33,9 @@ const SHAPES = {
     // the music magazines' recommendations: an open magazine
     magazine: [['path', { d: 'M3.5 6 Q7.5 4.5 12 6.5 Q16.5 4.5 20.5 6 V18.5 Q16.5 17 12 19 Q7.5 17 3.5 18.5 Z' }],
         ['path', { d: 'M12 6.5 V19 M6 9 H9.5 M6 11.5 H9.5 M14.5 9 H18 M14.5 11.5 H18' }]],
+    // not on Qobuz yet (a magazine's pick): an hourglass, sand in the lower bulb
+    hourglass: [['path', { d: 'M7 3.5 H17 M7 20.5 H17 M8 3.5 V6.5 Q8 9.5 12 12 Q16 9.5 16 6.5 V3.5 M8 20.5 V17.5 Q8 14.5 12 12 Q16 14.5 16 17.5 V20.5' }],
+        ['path', { d: 'M9.6 19.2 Q12 16.2 14.4 19.2 Z', fill: 'currentColor', 'stroke-width': 1 }]],
     grid: [['rect', { x: 4, y: 4, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 4, width: 6.5, height: 6.5, rx: 1 }],
         ['rect', { x: 4, y: 13.5, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 13.5, width: 6.5, height: 6.5, rx: 1 }]],
     list: [['rect', { x: 3.5, y: 5, width: 4.5, height: 4.5, rx: .8 }], ['rect', { x: 3.5, y: 14.5, width: 4.5, height: 4.5, rx: .8 }],

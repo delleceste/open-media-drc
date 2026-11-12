@@ -2307,6 +2307,8 @@ P.row = (c, where = '') => {
         h('div', { class: 'qz-artist' }, c.artist),
         // one badge: awards and my rating, a tap shows them all (widgets/albuminfo.js)
         // a magazine's pick: its magazines' awards instead (the same ones, shorter)
+        unfound ? h('div', { class: 'qz-notyet small', title: 'Not found on Qobuz: looked for again every day' },
+            K.tIcon('hourglass'), 'Not on Qobuz yet') : null,
         c.mag ? K.magazines.summary(c.mag) : K.awardsBox(c, c.awards ? { awards: c.awards, rating: c.rating || 0 } : null, { compact: true }),
         c.performers && c.performers.length
             ? h('div', { class: 'qz-perf small muted' }, c.performers.slice(0, 4).map(who).join(', ')) : null,
@@ -2367,6 +2369,8 @@ P.tile = (c, where = '') => {
         h('div', { class: 'qz-tcover' },
             c.image ? h('img', { src: c.image_large || c.image, alt: '', loading: 'lazy', draggable: 'false' })
                 : c.mag ? h('span', { class: 'qz-nocover', title: 'Not found on Qobuz' }, K.tIcon('magazine')) : null,
+            c.mag && !c.id ? h('span', { class: 'qz-tnotyet', title: 'Not on Qobuz yet: looked for again every day',
+                'aria-label': 'Not on Qobuz yet' }, K.tIcon('hourglass')) : null,
             (c.awards && c.awards.length) || c.rating ? h('span', { class: 'qz-taward', title: 'Awarded' }, '🏆') : null,
             c.source === 'local' ? h('span', { class: 'qz-taward qz-local-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null,
             quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null,
