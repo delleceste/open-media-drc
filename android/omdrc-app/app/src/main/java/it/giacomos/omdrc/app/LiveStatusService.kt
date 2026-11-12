@@ -61,8 +61,10 @@ private const val TAG = "OmdrcWidget"
  * it is the box's player in Android's media controls, backed by a
  * MediaSession: play/pause, previous/next, 15 s back and forward and seeking
  * for music, play/pause
- * for a film, and Close. Off, it is a plain notification offering Play or
- * Pause, Levels and Close. Swiping either away is the same as Close.
+ * for a film, and Close; stopped with a track to start, Play, previous and
+ * next. With nothing to control it is one row instead, the text and Close at
+ * its right. Off, it is a plain notification offering Play or Pause, Levels
+ * and Close. Swiping either away is the same as Close.
  * Android requires a foreground service to show it the whole time; its Close
  * action stops the service and every other background request of the app
  * until the app is opened again (see AppPrefs.closed).
@@ -275,6 +277,12 @@ class LiveStatusService : Service() {
         if (session != null) return
         session = MediaSessionCompat(this, "omdrc").apply {
             setSessionActivity(dashboardIntent(AppPrefs.defaultHost(this@LiveStatusService), AppPrefs.defaultPort(this@LiveStatusService)))
+            // previous and next keep their places when not offered (a film): the other
+            // buttons, Close among them, do not slide into the middle
+            setExtras(android.os.Bundle().apply {
+                putBoolean("android.media.playback.ALWAYS_RESERVE_SPACE_FOR.ACTION_SKIP_TO_PREVIOUS", true)
+                putBoolean("android.media.playback.ALWAYS_RESERVE_SPACE_FOR.ACTION_SKIP_TO_NEXT", true)
+            })
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() = send("play")
                 override fun onPause() = send("pause")
@@ -366,7 +374,10 @@ class LiveStatusService : Service() {
     private fun playPauseAction(snapshot: WidgetSnapshot?, now: NowState?): String? {
         val state = when {
             now?.video != null -> if (now.video.paused) "pause" else "play"
-            now != null -> now.music.state
+            // stopped with a track to start: Play (from that track), previous and next
+            now != null -> now.music.state.let {
+                if (it == "stop" && (now.music.title.isNotEmpty() || now.music.line1.isNotEmpty())) "stopped" else it
+            }
             else -> when (snapshot?.mpd?.state) {
                 "playing" -> "play"
                 "paused" -> "pause"
@@ -375,7 +386,7 @@ class LiveStatusService : Service() {
         }
         return when (state) {
             "play" -> "pause"
-            "pause" -> "play"
+            "pause", "stopped" -> "play"
             else -> null
         }
     }
@@ -491,6 +502,8 @@ class LiveStatusService : Service() {
 
         val playPause = playPauseAction(snapshot, now)
         val video = now?.video != null
+        // stopped with a track to start: Play offered, Stop and the seek buttons not
+        val stopped = !video && now?.music?.state == "stop"
         val music = !video && playPause != null
         target = Target(host, port, video, music)
         if (now != null && (icon != null || playPause != null)) {
@@ -518,8 +531,22 @@ class LiveStatusService : Service() {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
 
         val session = session
+        if (session != null && playPause == null) {
+            // nothing to control: not Android's media player (its Close would sit alone under
+            // the text) but one row, the text and Close at its right
+            session.isActive = false
+            val views = android.widget.RemoteViews(packageName, R.layout.notification_closeable).apply {
+                setTextViewText(R.id.notif_title, title)
+                setTextViewText(R.id.notif_text, collapsed)
+                setOnClickPendingIntent(R.id.notif_close, closeIntent)
+            }
+            return builder
+                .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+                .setCustomContentView(views)
+                .build()
+        }
         if (session != null) {
-            updateSession(session, title, artist, album, icon, now, playPause, music)
+            updateSession(session, title, artist, album, icon, now, playPause, music, stopped)
             val compact = mutableListOf<Int>()
             var count = 0
             if (music) {
@@ -540,7 +567,7 @@ class LiveStatusService : Service() {
                     transportIntent(host, port, "next", false, 4))
                 compact += count++
             }
-            if (playPause != null) {
+            if (playPause != null && !stopped) {
                 builder.addAction(R.drawable.ic_stop, getString(R.string.live_stop),
                     transportIntent(host, port, "stop", video, 5))
             }
@@ -563,7 +590,7 @@ class LiveStatusService : Service() {
             } else {
                 builder.addAction(R.drawable.ic_play, getString(R.string.live_play), playPauseIntent)
             }
-            builder.addAction(R.drawable.ic_stop, getString(R.string.live_stop),
+            if (!stopped) builder.addAction(R.drawable.ic_stop, getString(R.string.live_stop),
                 transportIntent(host, port, "stop", video, 5))
         }
         return builder
@@ -592,9 +619,9 @@ class LiveStatusService : Service() {
      *  updates), and the buttons that make sense for it. */
     private fun updateSession(
         session: MediaSessionCompat, title: String, artist: String, album: String, art: Bitmap?,
-        now: NowState?, playPause: String?, music: Boolean,
+        now: NowState?, playPause: String?, music: Boolean, stopped: Boolean,
     ) {
-        val duration = now?.music?.duration?.takeIf { music && it > 0 }
+        val duration = now?.music?.duration?.takeIf { music && !stopped && it > 0 }
         session.setMetadata(
             MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
@@ -606,10 +633,13 @@ class LiveStatusService : Service() {
                 }
                 .build(),
         )
-        val state = when (playPause) {
+        val state = when {
+            stopped -> PlaybackStateCompat.STATE_STOPPED
+            else -> when (playPause) {
             "pause" -> PlaybackStateCompat.STATE_PLAYING
             "play" -> PlaybackStateCompat.STATE_PAUSED
             else -> if (now == null) PlaybackStateCompat.STATE_NONE else PlaybackStateCompat.STATE_STOPPED
+            }
         }
         var actions = 0L
         if (playPause != null) {
@@ -643,7 +673,7 @@ class LiveStatusService : Service() {
                             ).build(),
                         )
                     }
-                    if (playPause != null) {
+                    if (playPause != null && !stopped) {
                         addCustomAction(
                             PlaybackStateCompat.CustomAction.Builder(
                                 CUSTOM_STOP, getString(R.string.live_stop), R.drawable.ic_stop,
