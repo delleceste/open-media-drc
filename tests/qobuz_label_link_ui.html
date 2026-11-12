@@ -1,0 +1,48 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+<div id="page" style="width:390px"></div><div id="overlay-root"></div><pre id="result">RUNNING</pre>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/albuminfo.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
+<script>
+// The record label in the album details opens its catalogue on the Qobuz page,
+// closing the sheet; the enlarged cover keeps it plain text (a tap there seeks).
+(async () => {
+    const check = (ok, message) => { if (!ok) throw Error(message); };
+    const tick = () => new Promise(r => setTimeout(r));
+    try {
+        localStorage.clear();
+        K.state.features.qobuz_search = true;
+        K.library = { mount() {}, show() {}, hide() {}, visible: false };
+        K.review = { mount() {}, show() {}, hide() {} };
+        K.magazines = { mount() {}, show() {}, hide() {}, loadBadges() {}, decorate: x => x };
+        K.awardsPopup = () => {}; K.awardsBox = () => null;
+        const calls = [], went = [];
+        K.goto = id => went.push(id);
+        K.api = async url => {
+            calls.push(url);
+            if (url.startsWith('/qobuz/album/')) return { ok: true, album: { id: 'a1', title: 'Symphony', artist: 'Orchestra',
+                label: 'PENTATONE', label_id: '77', date: '2024-01-05', genre: 'Classical' } };
+            return { ok: true, albums: [], more: false, next_offset: 0, label: { id: '', name: '' }, hidden: { upcoming: 0, singles: 0 }, entries: [] };
+        };
+        const P = K.pages.find(p => p.id === 'qobuz');
+        for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
+        P.mount(document.getElementById('page'));
+        await K.albumInfo('a1');
+        const root = document.getElementById('overlay-root');
+        const links = [...root.querySelectorAll('.qz-labellink')];
+        check(links.length === 2 && links.every(l => l.textContent === 'PENTATONE'), 'The facts line and the Label row both link');
+        check(root.querySelector('.ai-head .muted.small').textContent === 'PENTATONE · 2024-01-05 · Classical', 'The facts still read with dots');
+        links[1].click();
+        await tick();
+        const asked = new URLSearchParams(calls.at(-1).split('?')[1]);
+        check(!root.children.length, 'The details sheet closes');
+        check(went.at(-1) === 'qobuz' && P.view() === 'label' && asked.get('id') === '77' && asked.get('name') === 'PENTATONE',
+            'The label catalogue opens on the Qobuz page');
+        check(K.labelLink({ label: '' }) === null, 'No label, no link');
+        document.getElementById('result').textContent = 'PASS';
+    } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
+})();
+</script>

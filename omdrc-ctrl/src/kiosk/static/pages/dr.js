@@ -404,7 +404,7 @@ const openAlbum = async (page, a, backLabel) => {
     const list = h('div', { class: 'drrecent' }, rows);
     K.clear(page.detail).append(
         detailParent({ image: a.image, source: a.source, key: a.key, title: a.title,
-            lines: [[a.artist, a.year, a.label].filter(Boolean).join(' · '), K.dr.basisText(a.dr)],
+            lines: [K.dotted(a.artist, a.year, K.labelLink(a)), K.dr.basisText(a.dr)],
             dr: a.dr, back: page.back, backLabel }),
         list);
     page.browse.hidden = true;
@@ -429,7 +429,7 @@ const openAlbum = async (page, a, backLabel) => {
 };
 A.openAlbum = a => openAlbum(A, a, 'Back to albums by DR');
 A.rankRow = (a, n) => {
-    const sub = [a.artist, a.year, a.label].filter(Boolean).join(' · ');
+    const sub = K.dotted(a.artist, a.year, K.labelLink(a));
     // where the figure comes from: another box's collection, or tracks heard there
     const elsewhere = (a.dr.origins || []).filter(Boolean);
     const box = a.origin ? `at ${a.origin}` : elsewhere.length ? `heard ${(a.dr.origins || []).map(o => o || 'here').join(' + ')}` : '';

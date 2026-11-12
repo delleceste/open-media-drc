@@ -413,6 +413,17 @@ K.segmented = (options, current, onPick, cls = '') => K.h('div', { class: 'seg '
 // A label/value row.
 K.kv = (k, v, cls = '') => K.h('div', { class: 'kv ' + cls }, K.h('span', { class: 'k' }, k), K.h('span', { class: 'v' }, v));
 
+// A record label, tappable: its catalogue on the Qobuz page (K.openLabel, pages/qobuz.js).
+// `before` closes the sheet it sits in.  Not on the enlarged cover: a tap there seeks.
+K.labelLink = (c, before = null) => {
+    if (!c || !c.label) return null;
+    const go = e => { e.preventDefault(); e.stopPropagation(); if (before) before(); if (K.openLabel) K.openLabel(c); };
+    return K.h('span', { class: 'qz-labellink', role: 'link', tabindex: 0, title: `All of ${c.label}`,
+        onclick: go, onkeydown: e => { if (e.key === 'Enter') go(e); } }, c.label);
+};
+// Facts joined by " · ", any of them a node (a label link): empty ones left out.
+K.dotted = (...parts) => parts.filter(Boolean).flatMap((p, i) => i ? [' · ', p] : [p]);
+
 // Jump to a page by id (used by tappable summaries).
 // ?embed=<page> (kiosk_shell.html): that page alone, no bars, no screen saver
 K.embed = document.documentElement.dataset.embed || '';

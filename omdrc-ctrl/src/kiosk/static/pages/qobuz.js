@@ -1643,8 +1643,7 @@ P.paintPreview = (text, d = P.last) => {
     const asked = P.plain(P.input.value);
     const named = a => { const x = P.plain(a); return !!x && !!asked && (asked.includes(x) || (asked.length > 2 && x.includes(asked))); };
     const line = c => h('div', { class: 'qz-pv-line' + (c.lowered ? ' low' : '') },
-        [((c.awards && c.awards.length) || c.rating ? '🏆 ' : '') + c.title + (c.version ? ` (${c.version})` : ''), named(c.artist) ? '' : c.artist, c.year, c.label]
-            .filter(Boolean).join(' · '));
+        ...K.dotted(((c.awards && c.awards.length) || c.rating ? '🏆 ' : '') + c.title + (c.version ? ` (${c.version})` : ''), named(c.artist) ? '' : c.artist, c.year, K.labelLink(c)));
     const n = `${d.count} album${d.count === 1 ? '' : 's'}`;
     const head = partial ? `Searching… ${n} so far (${d.considered} looked at)` : n + (d.more ? ' so far' : '');
     const top = P.preview.scrollTop;
@@ -1925,6 +1924,19 @@ P.openLabel = c => {
     P.labelRows = null;
     if (P.fromNowShown) { P.fromNowShown = false; P.resHead.hidden = true; P.viewRow.hidden = false; }
     P.setView('label', true);
+};
+// From anywhere else (K.labelLink in core.js: the album details, a magazine pick's
+// sheet, the DR log): the label's catalogue on this page.
+K.openLabel = c => {
+    if (!c || !c.label) return;
+    P.fullWanted = false; P.fromNow = false;
+    if (P.el) { P.closeFull(); P.openLabel(c); }
+    else {        // not mounted yet: show() reads the view and loads the catalogue
+        const back = P.view() === 'label' ? pref('labelView', {}).back : P.view();
+        setPref('labelView', { id: c.label_id || '', name: c.label, back: back || 'results' });
+        setPref('view', 'label');
+    }
+    K.goto('qobuz');
 };
 P.labelBack = () => P.setView(pref('labelView', {}).back || 'results', true);
 // Android Back out of a catalogue goes where its ‹ does: to the cloud it was opened from.

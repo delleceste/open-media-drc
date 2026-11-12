@@ -267,7 +267,7 @@ const researchLinks = a => {
 
 const page = (a, actions) => {
     const out = [];
-    const facts = [a.label, a.date || a.year, a.genre].filter(Boolean).join(' · ');
+    const facts = K.dotted(K.labelLink(a, close), a.date || a.year, a.genre);
     const off = a.streamable === false || !!(actions && actions.off);
     const act = (cls, title, fn, label) => h('button', { type: 'button', class: 'btn ' + cls, disabled: off,
         title: off ? 'Not available on Qobuz' : title, 'aria-label': title, onclick: fn }, label);
@@ -289,7 +289,7 @@ const page = (a, actions) => {
             h('div', { class: 'ai-award-actions' },
                 h('button', { type: 'button', class: 'chip ai-award-add', onclick: () => K.awardsPopup(a) }, 'Add award or rate'),
                 K.awardsBox(a, { awards: a.awards || [], rating: a.rating || 0 }, { compact: true })),
-            facts ? h('div', { class: 'muted small' }, facts) : null)));
+            facts.length ? h('div', { class: 'muted small' }, facts) : null)));
     const research = researchLinks(a);
     if (research) out.push(research);
     // the booklet first: the reason to come here, often
@@ -307,7 +307,7 @@ const page = (a, actions) => {
     const rows = [
         ['Release', [a.release_type, a.date].filter(Boolean).join(', ')],
         ['Streaming since', a.released_stream && a.released_stream !== a.date ? a.released_stream : ''],
-        ['Label', a.label],
+        ['Label', K.labelLink(a, close)],
         ['Genre', (a.genres && a.genres.length ? a.genres[a.genres.length - 1].replace(/→/g, ' › ') : a.genre) || ''],
         ['Quality', a.technical || (a.bits && a.rate ? `${a.bits} bit / ${a.rate} kHz` : '')],
         ['Tracks', [a.tracks ? `${a.tracks}` : '', a.media_count > 1 ? `${a.media_count} discs` : '', dur(a.duration)].filter(Boolean).join(' · ')],

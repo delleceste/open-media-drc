@@ -127,7 +127,7 @@ M.sheet = (c, actions) => {
         h('div', { class: 'sheet mag-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': c.title },
             h('div', { class: 'mag-sheet-top' },
                 c.image ? h('img', { src: c.image_large || c.image, alt: '' }) : null,
-                h('div', {}, h('h2', {}, c.title), h('div', { class: 'muted' }, [c.artist, c.label, c.year].filter(Boolean).join(' · '))),
+                h('div', {}, h('h2', {}, c.title), h('div', { class: 'muted' }, K.dotted(c.artist, K.labelLink(c, close), c.year))),
                 h('button', { type: 'button', class: 'btn', title: 'Close', 'aria-label': 'Close', onclick: close }, '✕')),
             M.block(c),
             h('div', { class: 'sheet-actions' },
