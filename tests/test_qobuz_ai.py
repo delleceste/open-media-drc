@@ -104,6 +104,40 @@ class AITest(unittest.TestCase):
                 self.assertIn("Three Beethoven", answer["ai"]["trace"][0]["prompt"])
                 self.assertIn("Review", answer["ai"]["trace"][0]["reply"])
 
+    def test_request_constraints_become_filters_unless_set_by_hand(self):
+        self.configure("claude")
+        plan = {"search_queries": ["Tchaikovsky Jurowski"], "labels": ["PENTATONE"],
+                "released_within_years": 10, "released_from_year": None, "released_to_year": None}
+        post, searched = self.post, []
+
+        def planned(cfg, body, timeout):
+            answer = post(cfg, body, timeout)
+            if len(self.sent) == 2:
+                self.assertIn("Pentatone Tchaikovsky", body["messages"][0]["content"])
+                answer["content"][0]["input"] = plan
+            return answer
+        items = [{**raw("good"), "label": {"name": "PENTATONE"}, "release_date_original": "2020-05-01"},
+                 {**raw("old"), "label": {"name": "PENTATONE"}, "release_date_original": "2005-05-01"},
+                 {**raw("other"), "release_date_original": "2021-05-01"}]
+        cat, _ = catalog(items)
+        cat.settings.labels = qs.parse_labels("Pentatone\nDecca")
+        search = cat.search
+        cat.search = lambda **kw: searched.append(kw) or search(**kw)
+        answer = ai.recommend(self.root, cat, "best Pentatone Tchaikovsky of the last 10 years", {}, post=planned)
+        self.assertEqual(answer["ai"]["filters"], {"labels": ["Pentatone"], "last": 10})
+        self.assertEqual(searched[0]["labels"], ["Pentatone"])
+        self.assertEqual(searched[0]["last_years"], 10)
+        self.assertEqual(json.loads(self.sent[2]["messages"][0]["content"].split("\n")[-1])["candidates"][0]["id"], "good")
+        self.assertEqual(len(json.loads(self.sent[2]["messages"][0]["content"].split("\n")[-1])["candidates"]), 1)
+        # a filter set by hand wins; the other still comes from the request
+        self.sent, searched[:] = [], []
+        with self.assertRaises(ai.AIError) as failed:
+            ai.recommend(self.root, cat, "best Pentatone Tchaikovsky of the last 10 years",
+                         {"labels": ["Decca"]}, post=planned)
+        self.assertIn("from your request: last 10 years", str(failed.exception))
+        self.assertEqual(searched[0]["labels"], ["Decca"])
+        self.assertEqual(searched[0]["last_years"], 10)
+
     def test_settings_keep_each_providers_key_private_and_owner_only(self):
         cfg = self.configure()
         self.assertTrue(cfg["configured"])

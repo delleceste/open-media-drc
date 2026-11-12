@@ -1339,6 +1339,7 @@ P.askAI = async () => {
     P.aiAccountUsage = settings.provider === 'claude_account' ? settings.account_usage : null;
     if (!prompt) { P.aiButton.disabled = false; K.toast('Type a recommendation request first', 'error'); return; }
     P.input.blur(); P.showSuggestions([]);
+    P.revertAIFilters();
     const params = P.params(0);
     P.previewDismissed = false;
     P.searchedKey = params.toString(); P.request = params.toString();
@@ -1371,8 +1372,41 @@ P.askAI = async () => {
     if (d.ai?.trace) P.aiTrace = d.ai.trace;
     if (!d.ok) { P.paintError(d.error); P.paintPreview(d.error); return; }
     P.last = d; P.autoMore = false;
+    P.applyAIFilters(d.ai?.filters);
+    P.searchedKey = P.params(0).toString();
     P.paintSeen(); P.paintResults(); P.paintPreview(); P.paintStale(); P.openFilters(false);
 };
+
+// The label and date filters the AI read from the request, and the box applied to
+// its Qobuz searches: set here too, so the filters show what the results answer.
+// What they replaced is kept: the next AI request starts from it again, unless a
+// filter was changed by hand meanwhile (then it is the user's).
+const DATE_KEYS = ['date', 'lastN', 'from', 'to'];
+P.applyAIFilters = f => {
+    P.aiFilters = null;
+    if (!f || !(f.labels || f.last || f.from || f.to)) return;
+    const before = { labels: [...P.selected], ...Object.fromEntries(DATE_KEYS.map(k => [k, pref(k, undefined)])) };
+    if (f.labels) { for (const name of f.labels) P.selected.add(name); setPref('labels', [...P.selected]); }
+    if (f.last && f.last <= 30) { setPref('date', 'last'); setPref('lastN', f.last); }
+    else if (f.last) { setPref('date', 'span'); setPref('from', thisYear - f.last); setPref('to', ''); }
+    else if (f.from || f.to) { setPref('date', 'span'); setPref('from', f.from || YEAR_MIN); setPref('to', f.to || ''); }
+    P.aiFilters = { before, after: P.filterState() };
+    P.filtersDirty = false;
+    P.paintLabels(); P.paintDate();
+};
+P.filterState = () => JSON.stringify([[...P.selected].sort(), ...DATE_KEYS.map(k => pref(k, null))]);
+P.revertAIFilters = () => {
+    const a = P.aiFilters;
+    P.aiFilters = null;
+    if (!a || P.filterState() !== a.after) return;
+    P.selected = new Set(a.before.labels); setPref('labels', a.before.labels);
+    for (const k of DATE_KEYS) setPref(k, a.before[k] === undefined ? { date: 'any', lastN: 2, from: thisYear - 5, to: '' }[k] : a.before[k]);
+    P.paintLabels(); P.paintDate();
+};
+P.aiFiltersText = f => [
+    ...(f.labels || []),
+    f.last ? (f.last === 1 ? 'last year' : `last ${f.last} years`) : (f.from || f.to) ? `${f.from || '…'}–${f.to || 'today'}` : '',
+].filter(Boolean).join(' · ');
 
 // ── search ───────────────────────────────────────────────────────────────────
 P.params = scan => {
@@ -1528,6 +1562,10 @@ P.paintResults = () => {
     if (d.qobuz_error) kids.push(h('div', { class: 'errbox warn small' }, `Qobuz results unavailable: ${d.qobuz_error}`));
     if (d.ai) {
         if (d.ai.model_notice) kids.push(h('p', { class: 'small qz-ai-model-notice' }, d.ai.model_notice));
+        if (d.ai.filters && P.aiFiltersText(d.ai.filters)) kids.push(h('p', { class: 'small qz-ai-filters' },
+            'Filters from your request, applied to every Qobuz search: ',
+            h('button', { type: 'button', class: 'chip qz-chip on', title: 'Show the filters',
+                onclick: () => P.openFilters(true) }, P.aiFiltersText(d.ai.filters))));
         if (d.ai.summary) kids.push(h('p', { class: 'small qz-ai-summary' }, d.ai.summary));
         if (d.count < d.ai.requested) kids.push(h('p', { class: 'small muted' }, `Found ${d.count} verified releases of ${d.ai.requested} requested.`));
     }

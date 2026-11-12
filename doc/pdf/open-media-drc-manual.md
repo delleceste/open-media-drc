@@ -1846,6 +1846,8 @@ the one asked for, or a suitable number up to 20. Turning AI on clears the
 filters; label, date, Awarded and Hi-Res filters set afterwards apply. Changing a filter never starts another
 (paid or rate-limited) AI request by itself: press the magnifier again.
 
+A label or release date your request requires (*"Pentatone releases of the last ten years"*) becomes a filter on every Qobuz search the AI plans, unless you set that filter yourself: the results then show **Filters from your request**, and the label chip and date window are set in the filters, so you can see what the results answer. The next AI request starts without them, unless you changed them by hand. Preferences (*"ideally"*) are not turned into filters.
+
 While the request runs, and afterwards, **AI prompt and replies** under the
 results shows each stage: the exact prompt sent, the reply, the web searches
 the model made and the tokens it used. If a stage times out, what it had

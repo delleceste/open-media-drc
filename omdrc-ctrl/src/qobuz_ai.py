@@ -6,6 +6,7 @@ from the provider's web search, and selected releases are checked once more.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import re
@@ -64,7 +65,7 @@ PROMPT_DIR = Path(__file__).resolve().with_name("prompts")
 PROMPTS = {"system": (), "listening-research": ("metadata",),
            "listening-guide": ("metadata", "research"),
            "recommend-research": ("quantity", "request"),
-           "recommend-queries": ("research",), "recommend-select": ("quantity", "data"),
+           "recommend-queries": ("research", "request"), "recommend-select": ("quantity", "data"),
            "booklet-summary": ("metadata", "booklet"),
            "magazine-identify": ("file", "pages"), "magazine-picks": ("magazine", "pages"),
            "magazine-consensus": ("data",)}
@@ -882,6 +883,66 @@ SELECTION_SCHEMA = {
     "required": ["summary", "picks"]}
 
 
+# Stage 2 also reads the request's hard constraints, which the box then enforces
+# as filters on every Qobuz search (the label and release-date filters).
+PLAN_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "search_queries": {"type": "array", "items": {"type": "string"}},
+        "labels": {"type": "array", "items": {"type": "string"}},
+        "released_within_years": {"type": ["integer", "null"]},
+        "released_from_year": {"type": ["integer", "null"]},
+        "released_to_year": {"type": ["integer", "null"]}},
+    "required": ["search_queries", "labels", "released_within_years", "released_from_year", "released_to_year"]}
+
+
+def _request_filters(plan, filters, catalog):
+    """The label and date filters the request asks for, for what the user left unset:
+    a filter set by hand always wins.  {"labels": [...], "last": n} or
+    {"from": y, "to": y}, plus "search", the catalog.search arguments."""
+    applied, search = {}, {}
+    if not filters.get("labels"):
+        groups = getattr(getattr(catalog, "settings", None), "labels", None) or []
+        names = []
+        for name in plan.get("labels") or []:
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
+                continue
+            name = " ".join(name.split())
+            # a configured group's own name, so its chip is the one ticked
+            group = next((g for g in groups if g.name.casefold() == name.casefold()), None) or \
+                next((g for g in groups if g.matches(name)), None)
+            name = group.name if group else name
+            if name.casefold() not in (n.casefold() for n in names):
+                names.append(name)
+        if names:
+            applied["labels"] = search["labels"] = names[:3]
+    if not (filters.get("last_years") or filters.get("from_year") or filters.get("to_year")):
+        year = dt.date.today().year
+
+        def valid(value, lo, hi):
+            return value if type(value) is int and lo <= value <= hi else None
+        within = valid(plan.get("released_within_years"), 1, 100)
+        start = valid(plan.get("released_from_year"), 1900, year)
+        end = valid(plan.get("released_to_year"), 1900, year)
+        if start and end and start > end:
+            start = end = None
+        if within:
+            applied["last"] = search["last_years"] = within
+        elif start or end:
+            if start:
+                applied["from"] = search["from_year"] = start
+            if end:
+                applied["to"] = search["to_year"] = end
+    applied["search"] = search
+    return applied
+
+
+def _filters_text(applied):
+    when = (f"last {applied['last']} years" if applied.get("last", 1) != 1 else "last year") if "last" in applied else \
+        "–".join(str(applied.get(k, "")) for k in ("from", "to")) if ("from" in applied or "to" in applied) else ""
+    return " · ".join(filter(None, [", ".join(applied.get("labels", [])), when]))
+
+
 def recommend(state_dir, catalog, prompt, filters, count=None, post=None):
     recommendation_prompt(state_dir, prompt, count)
     cfg = configuration(state_dir)
@@ -978,16 +1039,15 @@ def _recommend(cfg, catalog, prompt, filters, count, post, trace):
     research_text = _text(research, provider)
     if not research_text:
         raise AIError("The AI returned no research. Check web-search access and try again.")
-    plan = structured(_prompt(cfg["state_dir"], "recommend-queries", research=research_text[:16000]),
-                      "plan_searches",
-                      {"type": "object", "additionalProperties": False,
-                       "properties": {"search_queries": {"type": "array", "items": {"type": "string"}}},
-                       "required": ["search_queries"]}, "Qobuz search plan", "recommend-queries")
+    plan = structured(_prompt(cfg["state_dir"], "recommend-queries", research=research_text[:16000], request=prompt),
+                      "plan_searches", PLAN_SCHEMA, "Qobuz search plan", "recommend-queries")
     if not isinstance(plan, dict):
         raise AIError("The AI returned an invalid search plan. Try again.")
     queries = plan.get("search_queries")
     if not isinstance(queries, list) or not queries:
         raise AIError("AI research completed, but found no supported recording titles to search in Qobuz. Review the research reply below.")
+    applied = _request_filters(plan, filters, catalog)
+    filters = {**filters, **applied.pop("search")}
     sources = _sources(research)
     candidates, searches = {}, []
     for query in queries[:4]:
@@ -1001,7 +1061,9 @@ def _recommend(cfg, catalog, prompt, filters, count, post, trace):
             if card.get("streamable") is not False and not card.get("lowered"):
                 candidates[card["id"]] = card
     if not candidates:
-        raise AIError("AI research completed, but no playable Qobuz titles matched its suggestions and your filters. Review the AI reply and search plan below.")
+        taken = _filters_text(applied)
+        raise AIError("AI research completed, but no playable Qobuz titles matched its suggestions and your filters" +
+                      (f" (from your request: {taken})" if taken else "") + ". Review the AI reply and search plan below.")
     # These are the only album IDs the selector may return. No generated ID is trusted.
     fields = ("id", "title", "version", "artist", "composer", "label", "date", "bits", "rate", "performers")
     data = json.dumps({"request": prompt, "research": research_text[:14000], "sources": sources,
@@ -1037,4 +1099,5 @@ def _recommend(cfg, catalog, prompt, filters, count, post, trace):
             "queries": searches, "labels_seen": [], "more": False, "unstreamable": 0,
             "enriched": len(results), "lowered": 0, "scan": 0,
             "ai": {"provider": provider, "model_notice": _take_model_notice(cfg), "summary": str(picks.get("summary", ""))[:2000],
-                   "requested": count, "trace": trace}, "exclude_cd": bool(filters.get("exclude_cd"))}
+                   "requested": count, "trace": trace, "filters": applied},
+            "exclude_cd": bool(filters.get("exclude_cd"))}

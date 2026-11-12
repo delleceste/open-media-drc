@@ -30,6 +30,8 @@ it; a pick without a supporting link is flagged. When nothing meets every
 criterion, it says so, as in the screenshot, and explains which compromise
 each pick makes.
 
+A label or release date your request requires (*"Pentatone releases of the last ten years"*) becomes a filter on every Qobuz search the AI plans, unless you set that filter yourself: the results then show **Filters from your request**, and the label chip and date window are set in the filters, so you can see what the results answer. The next AI request starts without them, unless you changed them by hand. Preferences (*"ideally"*) are not turned into filters.
+
 The label, release-date, Awarded and Hi-Res filters still apply. Changing a
 filter **never** starts another AI request by itself: press the magnifier
 again. **AI prompt and replies**, under the results, shows each stage: the
