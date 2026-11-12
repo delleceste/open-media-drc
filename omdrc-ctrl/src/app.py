@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 import sys
 import urllib.request
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urlencode, urlsplit
 import markdown as md_lib
 from flask import Flask, Response, render_template, jsonify, redirect, request, send_from_directory
 if os.path.dirname(__file__) not in sys.path:
@@ -4783,6 +4783,20 @@ def _loaded_album_art(np: dict, url: str = "") -> str:
         return ""
 
 
+def _local_file_art(np: dict) -> str:
+    """The cover of a local library file MPD is playing (not a renderer's
+    stream): the folder's or the file's art, else the album's on Qobuz -- the
+    same /qobuz/local/art the local search results use.  Without it a local
+    album showed no cover, and stopped, no seek row either (kiosk .now.idle)."""
+    file = np.get("file", "")
+    if (not file or "://" in file or file.startswith("/")
+            or "qobuz_web" not in sys.modules):
+        return ""
+    return "/qobuz/local/art?" + urlencode({
+        "file": file, "artist": np.get("album_artist") or np.get("artist", ""),
+        "album": np.get("album", "")})
+
+
 def _upmpdcli_qconnect_status() -> dict:
     """The {line1, line2, state, events} shape /qconnect/status serves for
     qobuzconnect2mpd's own status file, built instead from a direct MPD
@@ -4827,7 +4841,7 @@ def _upmpdcli_qconnect_status() -> dict:
             # album and caches within one.
             "art": ("/qconnect/art?v=" +
                     hashlib.sha1(art_url.encode()).hexdigest()[:10]
-                    if art_url else ""),
+                    if art_url else _local_file_art(np)),
             "edition": _edition_line(
                 np.get("label") or meta.get("label", ""),
                 np.get("date") or meta.get("year", "")),
@@ -4859,6 +4873,8 @@ def qconnect_status():
         status["qobuz_album"] = _qobuz_album_of(art_url)
         if art_url:
             status["art"] = "/qconnect/art?v=" + hashlib.sha1(art_url.encode()).hexdigest()[:10]
+        elif status["line1"] and np.get("album") and np["album"] in status["line1"]:
+            status["art"] = _local_file_art(np)
         # qobuzconnect2mpd's status file names the track and the format; the
         # edition reaches MusicPD's queue as tags instead (Label, Date), so
         # read them from there while something is playing.

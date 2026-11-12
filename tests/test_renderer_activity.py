@@ -114,6 +114,24 @@ class UpmpdcliStatusTest(unittest.TestCase):
         self.assertNotIn("Producer", got["line1"])
         self.assertNotIn("Lyricist", got["line1"])
 
+    def test_a_local_file_gets_the_local_library_cover(self):
+        # No DIDL cover for a file from MPD's own library: the card points at
+        # /qobuz/local/art, which serves the folder's art or the Qobuz one.
+        now = {"file": "Pop Rock/Roxy Music/Avalon/03 - Avalon.flac", "title": "Avalon",
+               "album": "Avalon", "artist": "ROXY MUSIC", "album_artist": "ROXY MUSIC",
+               "state": "stop", "elapsed": None, "duration": 256.6, "audio": ""}
+        with patch.object(APP, "_mpd_now_playing_via_protocol", return_value=now), \
+                patch.object(APP, "_upmpdcli_didl_meta", return_value={}), \
+                patch.object(APP, "_loaded_album_art", return_value=""), \
+                patch.dict(sys.modules, {"qobuz_web": object()}):
+            got = APP._upmpdcli_qconnect_status()
+            self.assertTrue(got["art"].startswith("/qobuz/local/art?file=Pop+Rock%2FRoxy+Music"))
+            self.assertIn("artist=ROXY+MUSIC", got["art"])
+            self.assertIn("album=Avalon", got["art"])
+            for stream in ("http://127.0.0.1:49152/qobuz/track", "/abs/path.flac"):
+                with patch.object(APP, "_mpd_now_playing_via_protocol", return_value={**now, "file": stream}):
+                    self.assertEqual(APP._upmpdcli_qconnect_status()["art"], "")
+
 
 class QobuzAlbumOfCoverTest(unittest.TestCase):
     def test_the_album_id_is_read_from_a_qobuz_cover(self):
