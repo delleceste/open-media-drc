@@ -69,6 +69,14 @@ REVIEW = re.compile(
     r"|la\s+dolce\s+volta|outhere|glossa|arcana|accent|challenge|capriccio|chateau|ramée|aparte|naive|naïve)\b",
     re.I)
 CATALOGUE = re.compile(r"\b[A-Z]{2,6}[ -]?\d{3,7}\b")
+# A magazine's top distinction for the month (or the year): the Diapason d'or, a
+# Recording of the Month, a Choc, an annual award.  Its editors' many choices are not;
+# nor is an archive or reissue section's own pick of the month.
+TOP_AWARD = re.compile(
+    r"diapason\s*d\W?\s*or\b|\b(?:recording|disc|record|album|cd|choice)\s+of\s+the\s+(?:month|year)\b"
+    r"|\baward\b|\bchoc\b|\bstern\s+des\s+monats\b|\bdu\s+mois\b|\bdel\s+mes[e]?\b|\bsupersonic\b"
+    r"|\bjoya\b|\bpreis\s+der\s+deutschen\s+schallplattenkritik\b", re.I)
+NOT_TOP = re.compile(r"\b(?:archive|reissue|historic(?:al)?|r[ée][ée]dition|nomin\w*|shortlist\w*)\b", re.I)
 
 PICK_FIELDS = ("composer", "works", "performers", "label", "catalogue", "album_title", "award",
                "rating", "artistic", "sound", "reviewer")
@@ -312,6 +320,12 @@ MAGAZINE_MARKS = {"Gramophone": "G", "Diapason": "D", "BBC Music Magazine": "BBC
                   "Opernwelt": "OW", "Crescendo": "Cr", "Amadeus": "A", "Musica": "M", "Scherzo": "S",
                   "Ritmo": "R", "Limelight": "L", "Stereophile": "SP", "The Absolute Sound": "TAS",
                   "Hi-Fi News": "HFN", "ResMusica": "RM", "Opera": "O"}
+
+
+def top_award(award: str) -> bool:
+    """Whether a review's award is its magazine's top one of the month (Diapason d'or,
+    Recording of the Month, ...), not one of its many editors' choices."""
+    return bool(award) and bool(TOP_AWARD.search(award)) and not NOT_TOP.search(award)
 
 
 def magazine_mark(name: str) -> str:
@@ -1172,6 +1186,10 @@ def entry(group: list[dict], key: str, verdicts: dict) -> dict:
         "key": _signature(group), "agreement": len(magazines), "magazines": magazines,
         "marks": [magazine_mark(name) for name in magazines],
         "awards": [f"{r['magazine']}: {r['award']}" for r in group if r.get("award")],
+        # the magazines' top distinctions (Diapason d'or, Recording of the Month): first after the agreed
+        "top": [f"{r['magazine']}: {r['award']}" for r in group if top_award(r.get("award") or "")],
+        "top_marks": list(dict.fromkeys(magazine_mark(r["magazine"]) for r in group
+                                        if top_award(r.get("award") or ""))),
         "quality": quality, "q": any(r.get("sound_exceptional") for r in group) or (quality or 0) >= 9,
         # the circle's colour: the sound as rated when a review describes it, else the performance
         "rating": quality if quality is not None else round(
@@ -1188,12 +1206,13 @@ def entry(group: list[dict], key: str, verdicts: dict) -> dict:
 
 
 def _rank(card: dict):
-    """Agreement first; then the circle's rating, so the colours run green to yellow (a Q
-    first among equals); then awards and the performance's rating; a recording not on
-    Qobuz after the ones that play."""
+    """Agreement first; then a magazine's top distinction (Diapason d'or, Recording of the
+    Month), the more of them the higher; then the circle's rating, so the colours run green
+    to yellow (a Q first among equals); then awards and the performance's rating; a
+    recording not on Qobuz after the ones that play."""
     m = card["mag"]
     scores = [r["artistic_score"] or 0 for r in m["reviews"]]
-    return (-m["agreement"], -m["rating"], not m["q"], -len(m["awards"]), -sum(scores) / len(scores),
+    return (-m["agreement"], -len(m["top_marks"]), -m["rating"], not m["q"], -len(m["awards"]), -sum(scores) / len(scores),
             not card.get("id"))
 
 
@@ -1204,7 +1223,8 @@ def month_view(root: Path, key: str) -> dict:
              | {"picks": len(i["picks"]), "remote": bool(i.get("remote")), "filed": i["month_key"],
                 "span": span_label(i["month_key"], months_covered(i))} for i in month_issues(root, key)]
     return {"month": key, "label": month_label(key), "issues": shown, "entries": cards,
-            "agreed": sum(1 for c in cards if c["mag"]["agreement"] > 1)}
+            "agreed": sum(1 for c in cards if c["mag"]["agreement"] > 1),
+            "top": sum(1 for c in cards if c["mag"]["agreement"] == 1 and c["mag"]["top_marks"])}
 
 
 def consensus(root: Path, cfg, key: str, cancel=None, post=None) -> None:
@@ -1250,8 +1270,11 @@ def document(root: Path, key: str) -> str:
               "(depth, detail, soundstage, warmth), or the performance's when the review does not describe the "
               "sound, 10 being the best; Q marks a recording singled out for its sound.", ""]
     agreed = [c for c in view["entries"] if c["mag"]["agreement"] > 1]
-    single = [c for c in view["entries"] if c["mag"]["agreement"] == 1]
-    for title, cards in (("Recommended by several magazines", agreed), ("Recommended by one magazine", single)):
+    top = [c for c in view["entries"] if c["mag"]["agreement"] == 1 and c["mag"]["top_marks"]]
+    single = [c for c in view["entries"] if c["mag"]["agreement"] == 1 and not c["mag"]["top_marks"]]
+    for title, cards in (("Recommended by several magazines", agreed),
+                         ("A magazine's top award: Diapason d'or, Recording of the Month", top),
+                         ("Recommended by one magazine", single)):
         if not cards:
             continue
         lines += [f"## {title}", ""]

@@ -1545,6 +1545,12 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .mag-issues { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .4rem; }
 .chip.mag-issue { cursor: pointer; }
 .mag-legend { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; margin: .1rem 0 .4rem; }
+.mag-filterrow { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin: .1rem 0 .3rem; }
+.chip.mag-filter { cursor: pointer; font: inherit; font-size: .85rem; max-width: 100%; padding-right: .4rem; }
+.chip.mag-filter.on { color: var(--accent); border-color: var(--accent); }
+.mag-section.mag-section-top { color: var(--warn-text); }
+.chip.mag-top { font-size: .74rem; min-height: 1.4rem; white-space: normal; font-weight: 650; color: #fff;
+    background: #b8860b; border-color: #b8860b; }
 .mag-section { font-size: .95rem; margin: .9rem 0 .4rem; color: var(--muted); font-weight: 650; }
 
 /* the quality circle: yellow to green, every shade between; a green Q when outstanding */
@@ -1619,6 +1625,7 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .mag-mark-letter { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; font-size: .95rem; line-height: 1;
     padding: .18rem .32rem; border-radius: .3rem; background: rgba(0,0,0,.62); color: #fff; letter-spacing: .02em;
     box-shadow: 0 0 0 1px rgba(255,255,255,.25) inset; }
+.mag-mark-letter.mag-mark-top { background: #b8860b; color: #fff; box-shadow: 0 0 0 1px rgba(255,236,170,.7) inset; }
 .qz-cover-wrap .mag-marks { left: .15rem; bottom: .15rem; }
 .qz-cover-wrap .mag-mark-letter { font-size: .7rem; padding: .12rem .22rem; }
 .qz-tcover:has(.mag-marks) .qz-taward, .qz-tcover:has(.mag-marks) .qz-tpartial { bottom: 1.75rem; }

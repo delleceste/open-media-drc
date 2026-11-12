@@ -5,7 +5,9 @@
  * result like any other (play, add, save, review later, details: pages/qobuz.js) with the
  * magazines' summaries of the performance and of the sound.  The circle beside it is the
  * reviews' rating of the recording quality, yellow to green (every one listed is a good
- * recording); a green Q marks an outstanding one.  Uploading starts the reading, shown
+ * recording); a green Q marks an outstanding one.  A magazine's top award of the month
+ * (Diapason d'or, Recording of the Month) comes next after the agreed ones, its letter gold
+ * on the cover; a chip filters the list to one magazine.  Uploading starts the reading, shown
  * here as it goes; the month's document (digest.md) is kept beside the PDFs on the box. */
 (() => {
 'use strict';
@@ -32,11 +34,14 @@ M.dot = (m, cls = '') => {
     return el;
 };
 
-// Which magazines recommend it, on its cover: G (Gramophone), D (Diapason), BBC, ...
+// Which magazines recommend it, on its cover: G (Gramophone), D (Diapason), BBC, ...;
+// gold when it is that magazine's top award (Diapason d'or, Recording of the Month).
+M.mark = name => name.split(/\s+/).map(w => w[0]).join('').slice(0, 3).toUpperCase();
 M.marks = m => {
-    const marks = m.marks || m.magazines.map(name => name.split(/\s+/).map(w => w[0]).join('').slice(0, 3).toUpperCase());
-    return h('span', { class: 'mag-marks', title: 'Recommended by ' + m.magazines.join(', '), 'aria-label': 'Recommended by ' + m.magazines.join(', ') },
-        marks.map(x => h('span', { class: 'mag-mark-letter' }, x)));
+    const marks = m.marks || m.magazines.map(M.mark), top = new Set(m.top_marks || []);
+    const label = 'Recommended by ' + m.magazines.join(', ') + ((m.top || []).length ? ' · ' + m.top.join(' · ') : '');
+    return h('span', { class: 'mag-marks', title: label, 'aria-label': label },
+        marks.map(x => h('span', { class: 'mag-mark-letter' + (top.has(x) ? ' mag-mark-top' : '') }, x)));
 };
 
 // What a result row shows of the magazines (pages/qobuz.js P.row), and the sheet a tile opens.
@@ -45,7 +50,9 @@ M.badges = m => h('div', { class: 'mag-badges' },
     m.agreement > 1 ? h('span', { class: 'chip mag-agree', title: 'Recommended by ' + m.magazines.join(', ') },
         `${m.agreement} magazines agree`) : null,
     ...m.magazines.map(name => h('span', { class: 'chip dim mag-name' }, name)),
-    m.awards.length ? h('span', { class: 'chip mag-award', title: m.awards.join('\n') }, '🏆 ' + m.awards.map(a => a.split(': ').slice(1).join(': ')).join(' · ')) : null);
+    ...(m.top || []).map(a => h('span', { class: 'chip mag-top', title: a }, '🏆 ' + a.split(': ').slice(1).join(': '))),
+    m.awards.length > (m.top || []).length ? h('span', { class: 'chip mag-award', title: m.awards.join('\n') },
+        m.awards.filter(a => !(m.top || []).includes(a)).map(a => a.split(': ').slice(1).join(': ')).join(' · ')) : null);
 M.block = (c, { open = false } = {}) => {
     const m = c.mag;
     const reviews = h('div', { class: 'mag-reviews', hidden: !open }, m.reviews.map(r => h('div', { class: 'mag-review' },
@@ -179,24 +186,40 @@ M.paintList = () => {
             + 'the ones several magazines agree on first.'));
         return;
     }
-    const n = d.entries.length;
+    // the magazine filter: every recommendation, or one magazine's (G, D, BBC, ...)
+    const names = [...new Set([...d.issues.map(i => i.magazine), ...d.entries.flatMap(c => c.mag.magazines)])].sort();
+    const markOf = name => { for (const c of d.entries) { const i = c.mag.magazines.indexOf(name); if (i >= 0 && c.mag.marks) return c.mag.marks[i]; } return M.mark(name); };
+    const only = names.includes(pref('only', '')) ? pref('only', '') : '';
+    const entries = only ? d.entries.filter(c => c.mag.magazines.includes(only)) : d.entries;
+    const filter = names.length > 1 ? h('select', { class: 'chip mag-filter' + (only ? ' on' : ''), 'aria-label': 'Show one magazine’s recommendations',
+        title: 'Show one magazine’s recommendations', onchange: e => { setPref('only', e.target.value); M.paintList(); } },
+        h('option', { value: '', selected: !only }, 'All magazines'),
+        names.map(name => h('option', { value: name, selected: name === only }, `${markOf(name)} · ${name}`))) : null;
+    const n = entries.length, nAgreed = entries.filter(c => c.mag.agreement > 1).length;
     M.info.append(...[
         h('div', { class: 'mag-issues' }, d.issues.map(i => h('button', { type: 'button', class: 'chip mag-issue',
             title: `${i.issue || ''} — ${i.picks} recommendations (tap: open or remove)`,
             onclick: e => M.issueMenu(i, e.currentTarget) }, `${i.magazine}` + (i.span ? ` (${i.span})` : '')
                 + ` · ${i.picks}` + (i.remote ? ` · ${i.box}` : '')))),
-        h('div', { class: 'qz-summary small muted' }, `${d.label}: ${plural(n, 'recommendation')}`
-            + (d.agreed ? `, ${d.agreed} agreed by several magazines` : '')),
+        h('div', { class: 'mag-filterrow' }, filter,
+            h('span', { class: 'qz-summary small muted' }, `${d.label}${only ? ', ' + only : ''}: ${plural(n, 'recommendation')}`
+                + (nAgreed ? `, ${nAgreed} agreed by several magazines` : ''))),
         d.refreshing ? h('div', { class: 'small muted mag-refreshing' }, h('span', { class: 'spinner small' }),
             ` Looking on Qobuz again for ${plural(d.refreshing, 'album')} missing or incomplete a day ago…`) : null,
         h('div', { class: 'mag-legend small muted' },
             M.dot({ rating: 5 }), M.dot({ rating: 7.5 }), M.dot({ rating: 10 }),
             ' rating (sound, else performance) ·', M.dot({ rating: 9, q: true }), ' great sound')].filter(Boolean));
-    const agreed = d.entries.filter(c => c.mag.agreement > 1), single = d.entries.filter(c => c.mag.agreement === 1);
+    // agreed by several first; then a magazine's top award of the month; then the rest
+    const isTop = c => c.mag.agreement === 1 && (c.mag.top_marks || []).length;
+    const agreed = entries.filter(c => c.mag.agreement > 1), top = entries.filter(isTop),
+        single = entries.filter(c => c.mag.agreement === 1 && !isTop(c));
+    const topTitle = [...new Set(top.flatMap(c => c.mag.top.map(a => a.split(': ').slice(1).join(': ')
+        .replace(/^.*\baward.*$/i, 'Annual award').replace(/^.*recording of the month.*$/i, 'Recording of the Month'))))].join(' · ');
     if (agreed.length) M.list.append(h('h3', { class: 'mag-section' }, 'Agreed by several magazines'), K.qobuzList(agreed, 'magazines'));
-    if (single.length) M.list.append(h('h3', { class: 'mag-section' }, agreed.length ? 'Recommended by one magazine' : 'Recommended'),
+    if (top.length) M.list.append(h('h3', { class: 'mag-section mag-section-top' }, '🏆 ' + topTitle), K.qobuzList(top, 'magazines'));
+    if (single.length) M.list.append(h('h3', { class: 'mag-section' }, agreed.length || top.length ? 'Recommended by one magazine' : 'Recommended'),
         K.qobuzList(single, 'magazines'));
-    if (!n) M.list.append(h('p', { class: 'muted' }, 'No recommendation was found in this month’s issues.'));
+    if (!n) M.list.append(h('p', { class: 'muted' }, only ? `${only} recommends nothing this month.` : 'No recommendation was found in this month’s issues.'));
 };
 
 // ── actions ──────────────────────────────────────────────────────────────────

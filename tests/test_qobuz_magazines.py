@@ -318,6 +318,22 @@ class ReadingTest(unittest.TestCase):
                          [("A", 10.0, "performance", False), ("C", 9.0, "sound", True),
                           ("D", 7.0, "performance", False), ("B", 6.0, "sound", False)])
 
+    def test_a_top_award_comes_next_after_the_agreed(self):
+        self.write_issue("2026-10", "Gramophone", [
+            pick(composer="A", performers="Ann One", catalogue="", sound_score=10, award="Editor's Choice"),
+            pick(composer="B", performers="Bob Two", catalogue="", sound_score=6, award="Recording of the Month"),
+            pick(composer="E", performers="Eve Five", catalogue="", sound_score=10, award="Archive Recording of the Month"),
+            pick(composer="S", performers="Sam Six", catalogue="", sound_score=5)])
+        self.write_issue("2026-10", "Diapason", [
+            pick(composer="C", performers="Cy Three", catalogue="", sound_score=5, award="Diapason d'or"),
+            pick(composer="S", performers="Sam Six", catalogue="", sound_score=5)])
+        view = mags.month_view(self.root, "2026-10")
+        self.assertEqual([c["mag"]["composer"] for c in view["entries"]], ["S", "B", "C", "A", "E"])
+        self.assertEqual(view["entries"][1]["mag"]["top_marks"], ["G"])
+        self.assertEqual(view["entries"][2]["mag"]["top"], ["Diapason: Diapason d'or"])
+        self.assertEqual(view["top"], 2)
+        self.assertIn("top award", mags.document(self.root, "2026-10"))
+
     def test_a_summer_issue_covers_july_and_august(self):
         slug = self.write_issue("2026-07", "Diapason", [pick(award="Diapason d'or")])
         path = self.root / "2026/07" / f"{slug}.json"
