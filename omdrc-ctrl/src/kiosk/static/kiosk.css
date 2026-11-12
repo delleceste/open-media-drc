@@ -1542,11 +1542,15 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .mag-upload { margin-bottom: .4rem; }
 .mag-bar { height: .35rem; border-radius: .2rem; background: var(--surface2); overflow: hidden; margin-top: .25rem; }
 .mag-bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
-.mag-issues { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .4rem; }
-.chip.mag-issue { cursor: pointer; }
+/* the magazine filter and the month's issues: one line, swiped sideways when they do not fit */
+.mag-issues { display: flex; flex-wrap: nowrap; gap: .35rem; margin-bottom: .4rem; min-width: 0; overflow-x: auto;
+    scrollbar-width: none; }
+.mag-issues::-webkit-scrollbar { display: none; }
+.chip.mag-issue { cursor: pointer; flex: none; padding: 0 .5rem; }
+.mag-job .btn { min-height: 0; padding: .25rem .7rem; font-size: .85rem; }
 .mag-legend { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; margin: .1rem 0 .4rem; }
-.mag-filterrow { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin: .1rem 0 .3rem; }
-.chip.mag-filter { cursor: pointer; font: inherit; font-size: .85rem; max-width: 100%; padding-right: .4rem; }
+.chip.mag-filter { cursor: pointer; font: inherit; font-size: .8rem; flex: none; min-width: 4.5rem; max-width: 8.5rem;
+    padding: 0 .2rem 0 .5rem; color: var(--text); text-overflow: ellipsis; }
 .chip.mag-filter.on { color: var(--accent); border-color: var(--accent); }
 .mag-section.mag-section-top { color: var(--warn-text); }
 .chip.mag-top { font-size: .74rem; min-height: 1.4rem; white-space: normal; font-weight: 650; color: #fff;
@@ -1565,6 +1569,11 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
     padding: .2rem .3rem; border-radius: .3rem; background: var(--green); color: #fff; }
 .qz-tile .qz-tq + .qz-tagree, .qz-tcover:has(.qz-tq) .qz-tagree { bottom: 1.45rem; }
 
+.mag-summary { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem; margin-top: .2rem; }
+.mag-summary { flex-wrap: nowrap; min-width: 0; }
+.mag-summary .chip { min-height: 1.3rem; font-size: .72rem; padding: 0 .45rem; white-space: nowrap; }
+.mag-summary .chip.mag-top, .mag-summary .chip.mag-award { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: 1.3rem; }
+.qz-row:not(.open) .qz-magdetail { display: none; }
 .mag-block { margin-top: .45rem; cursor: default; }
 .mag-badges { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem; }
 .chip.mag-agree { color: var(--ok-text); border-color: var(--ok-edge); background: rgba(63,185,80,.14); font-weight: 650; }

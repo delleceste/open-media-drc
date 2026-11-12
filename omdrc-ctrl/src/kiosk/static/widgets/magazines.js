@@ -53,7 +53,21 @@ M.badges = m => h('div', { class: 'mag-badges' },
     ...(m.top || []).map(a => h('span', { class: 'chip mag-top', title: a }, '🏆 ' + a.split(': ').slice(1).join(': '))),
     m.awards.length > (m.top || []).length ? h('span', { class: 'chip mag-award', title: m.awards.join('\n') },
         m.awards.filter(a => !(m.top || []).includes(a)).map(a => a.split(': ').slice(1).join(': ')).join(' · ')) : null);
-M.block = (c, { open = false } = {}) => {
+// A list row's one line (pages/qobuz.js P.row): the circle, the agreement, the award;
+// the rest (M.block) shows when the row is tapped open.
+// "BBC Music Magazine: BBC Music Magazine Awards 2026: Choral Award" → "Choral Award"
+const awardName = a => { const [mag, ...rest] = a.split(': '); const name = rest.join(': ');
+    return (name.startsWith(mag) ? name.slice(mag.length).trim() : name).split(': ').pop() || name; };
+M.summary = m => {
+    const top = m.top || [], others = m.awards.filter(a => !top.includes(a));
+    return h('div', { class: 'mag-summary' },
+        M.dot(m),
+        m.agreement > 1 ? h('span', { class: 'chip mag-agree', title: 'Recommended by ' + m.magazines.join(', ') }, `×${m.agreement}`) : null,
+        top.length ? h('span', { class: 'chip mag-top', title: top.join('\n') }, '🏆 ' + top.map(awardName).join(' · '))
+            : others.length ? h('span', { class: 'chip mag-award', title: others.join('\n') }, awardName(others[0])
+                + (others.length > 1 ? ` +${others.length - 1}` : '')) : null);
+};
+M.block = (c, { open = false, badges = true } = {}) => {
     const m = c.mag;
     const reviews = h('div', { class: 'mag-reviews', hidden: !open }, m.reviews.map(r => h('div', { class: 'mag-review' },
         h('div', { class: 'mag-review-head small' },
@@ -71,7 +85,7 @@ M.block = (c, { open = false } = {}) => {
     const paintToggle = () => { toggle.textContent = reviews.hidden ? `${plural(m.reviews.length, 'review')} ›` : 'Hide the reviews'; };
     paintToggle();
     return h('div', { class: 'mag-block', onclick: e => e.stopPropagation() },
-        M.badges(m),
+        badges ? M.badges(m) : h('div', { class: 'mag-badges' }, ...m.magazines.map(name => h('span', { class: 'chip dim mag-name' }, name))),
         h('p', { class: 'mag-art' }, m.shared ? h('span', { class: 'mag-label' }, 'Shared verdict ') : null, m.artistic),
         m.sound ? h('p', { class: 'mag-sound' }, h('span', { class: 'mag-label' }, 'Sound '), m.sound) : null,
         !c.id ? h('p', { class: 'small muted' }, 'Not found on Qobuz: search for it.') : null,
@@ -173,7 +187,7 @@ M.paintJob = () => {
             j.running ? h('span', { class: 'small muted' }, j.detail || 'Reading…') : null,
             h('span', { class: 'spacer' }),
             j.running ? h('button', { type: 'button', class: 'btn', onclick: () => M.jobAction('stop') }, 'Stop')
-                : waiting.length ? h('button', { type: 'button', class: 'btn primary', onclick: () => M.jobAction('start') },
+                : waiting.length ? h('button', { type: 'button', class: 'btn primary mag-read', onclick: () => M.jobAction('start') },
                     `Read ${plural(waiting.length, 'issue')}`) : null)].filter(Boolean));
 };
 
@@ -194,16 +208,16 @@ M.paintList = () => {
     const filter = names.length > 1 ? h('select', { class: 'chip mag-filter' + (only ? ' on' : ''), 'aria-label': 'Show one magazine’s recommendations',
         title: 'Show one magazine’s recommendations', onchange: e => { setPref('only', e.target.value); M.paintList(); } },
         h('option', { value: '', selected: !only }, 'All magazines'),
-        names.map(name => h('option', { value: name, selected: name === only }, `${markOf(name)} · ${name}`))) : null;
+        names.map(name => h('option', { value: name, selected: name === only }, `${markOf(name)} · ${name.replace(/\s+Magazine$/i, '')}`))) : null;
     const n = entries.length, nAgreed = entries.filter(c => c.mag.agreement > 1).length;
     M.info.append(...[
-        h('div', { class: 'mag-issues' }, d.issues.map(i => h('button', { type: 'button', class: 'chip mag-issue',
+        // the issues and the magazine filter share one line
+        h('div', { class: 'mag-issues' }, filter, d.issues.map(i => h('button', { type: 'button', class: 'chip mag-issue',
             title: `${i.issue || ''} — ${i.picks} recommendations (tap: open or remove)`,
-            onclick: e => M.issueMenu(i, e.currentTarget) }, `${i.magazine}` + (i.span ? ` (${i.span})` : '')
-                + ` · ${i.picks}` + (i.remote ? ` · ${i.box}` : '')))),
-        h('div', { class: 'mag-filterrow' }, filter,
-            h('span', { class: 'qz-summary small muted' }, `${d.label}${only ? ', ' + only : ''}: ${plural(n, 'recommendation')}`
-                + (nAgreed ? `, ${nAgreed} agreed by several magazines` : ''))),
+            onclick: e => M.issueMenu(i, e.currentTarget) }, i.magazine.replace(/\s+Magazine$/i, '') + (i.span ? ` (${i.span})` : '')
+                + (i.remote ? ` · ${i.box}` : '')))),
+        h('div', { class: 'qz-summary small muted' }, `${d.label}${only ? ', ' + only : ''}: ${plural(n, 'recommendation')}`
+            + (nAgreed ? `, ${nAgreed} agreed by several magazines` : '')),
         d.refreshing ? h('div', { class: 'small muted mag-refreshing' }, h('span', { class: 'spinner small' }),
             ` Looking on Qobuz again for ${plural(d.refreshing, 'album')} missing or incomplete a day ago…`) : null,
         h('div', { class: 'mag-legend small muted' },

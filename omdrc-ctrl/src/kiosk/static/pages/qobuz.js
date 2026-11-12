@@ -2261,11 +2261,13 @@ const who = p => p.roles && p.roles.length ? `${p.name} (${p.roles[0]})` : p.nam
 P.row = (c, where = '') => {
     const tracks = h('div', { class: 'qz-tracks' });
     const unfound = !!c.mag && !c.id;      // a magazine's pick Qobuz did not match: searched for
-    const body = h('div', { class: 'qz-body tap', onclick: () => unfound ? K.magazines.find(c) : P.toggleTracks(c, row, tracks) },
+    // a magazine's pick: one line of it here, the verdicts and reviews when tapped open
+    const body = h('div', { class: 'qz-body tap', onclick: () => unfound ? row.classList.toggle('open') : P.toggleTracks(c, row, tracks) },
         h('div', { class: 'qz-title' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-artist' }, c.artist),
         // one badge: awards and my rating, a tap shows them all (widgets/albuminfo.js)
-        K.awardsBox(c, c.awards ? { awards: c.awards, rating: c.rating || 0 } : null, { compact: true }),
+        // a magazine's pick: its magazines' awards instead (the same ones, shorter)
+        c.mag ? K.magazines.summary(c.mag) : K.awardsBox(c, c.awards ? { awards: c.awards, rating: c.rating || 0 } : null, { compact: true }),
         c.performers && c.performers.length
             ? h('div', { class: 'qz-perf small muted' }, c.performers.slice(0, 4).map(who).join(', ')) : null,
         h('div', { class: 'qz-meta small' },
@@ -2278,7 +2280,7 @@ P.row = (c, where = '') => {
             c.partial ? h('span', { class: 'chip warn qz-partial-chip', title: 'Only one track of this album is on Qobuz so far; the whole album is looked for again every day' }, '◐ 1 track only') : null));
     const off = c.streamable === false && !unfound;
     const local = c.source === 'local';
-    if (c.mag) body.append(K.magazines.block(c));
+    if (c.mag) body.append(h('div', { class: 'qz-magdetail' }, K.magazines.block(c, { badges: false })));
     if (c.ai) body.append(h('div', { class: 'qz-ai-reason small', onclick: e => e.stopPropagation() },
         h('p', {}, c.ai.reason),
         c.ai.uncertain ? h('p', { class: 'muted' }, 'Limited evidence: no supporting review linked.') : null,
