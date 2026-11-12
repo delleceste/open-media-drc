@@ -121,8 +121,12 @@ P.mount = el => {
                         // until the text or a filter changes (kiosk.css, paintStale)
                         h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›'))),
                 P.suggestBox),
-            P.fsum, P.filters));
-    if (pref('aiMode', false)) P.searchActions.append(P.fsum);
+            P.filters));
+    // the filters: a funnel beside Search (P.paintSummary), no line of their own
+    P.searchActions.append(P.fsum);
+    P.filtersBar = h('div', { class: 'qz-filtersbar' });
+    P.filters.prepend(P.filtersBar);
+    P.longPressFilters();
     P.results = h('div', { class: 'qz-results' });
     P.recentBox = h('div', { class: 'qz-recent' });
     P.awardedBox = h('div', { class: 'qz-awarded' });
@@ -1087,17 +1091,53 @@ P.paintSummary = () => {
     if (!P.fsum) return;
     const active = !!P.filtersActive();
     P.fsum.classList.toggle('qz-filtered', active);
+    // a funnel with its arrow: down to open the filters, up to fold them; yellow when one is set
+    const summary = P.filterSummary();
     K.clear(P.fsum).append(
-        h('button', { type: 'button', class: 'qz-fsum-toggle',
-            'aria-label': 'Filters', 'aria-expanded': String(!!P.filtersOpen),
-            title: P.filterSummary() || 'Filters', onclick: () => P.openFilters(!P.filtersOpen) },
-            h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
-            h('span', { class: 'qz-fsum-mark' }, 'Filters' + (P.filtersOpen ? ' ▴' : ' ▾'))));
-    if (P.filtersDirty) P.fsum.append(h('button', { type: 'button', class: 'btn qz-filter-apply',
-        title: 'Search with these filters', onclick: () => P.go() }, 'Apply Filters'));
-    if (active) P.fsum.append(h('button', { type: 'button', class: 'btn qz-filter-clear',
-        title: 'Clear filters', 'aria-label': 'Clear filters',
-        onclick: () => { P.resetFilters(); P.searchSoon(); } }, K.tIcon('clear')));
+        h('button', { type: 'button', class: 'btn qz-fsum-toggle',
+            'aria-label': 'Filters' + (summary ? ': ' + summary : ''), 'aria-expanded': String(!!P.filtersOpen),
+            title: (summary ? 'Filters: ' + summary : 'Filters') + (P.filtersOpen ? ' (tap to fold)' : ''),
+            onclick: () => P.openFilters(!P.filtersOpen) }, K.tIcon(P.filtersOpen ? 'filter_up' : 'filter_down')));
+    if (!P.filtersBar) return;
+    // inside the open filters: what is set, Apply, Clear
+    K.clear(P.filtersBar).append(...[
+        h('span', { class: 'qz-fsum-text small' }, summary || 'No filter set · long press a choice to search with it'),
+        P.filtersDirty ? h('button', { type: 'button', class: 'btn qz-filter-apply',
+            title: 'Search with these filters', onclick: () => { P.openFilters(false); P.go(); } }, 'Apply') : null,
+        active ? h('button', { type: 'button', class: 'btn qz-filter-clear',
+            title: 'Clear filters', 'aria-label': 'Clear filters',
+            onclick: () => { P.resetFilters(); P.searchSoon(); } }, K.tIcon('clear')) : null].filter(Boolean));
+};
+
+// A long press on a filter's choice: chosen as a tap would, then the filters fold and
+// the search runs.  A tap stays a tap.
+P.longPressFilters = () => {
+    let timer = null, start = null, target = null, swallowUntil = 0;
+    const cancel = () => { clearTimeout(timer); timer = null; if (target) target.classList.remove('pressing'); };
+    P.filters.addEventListener('pointerdown', e => {
+        const el = e.button ? null : e.target.closest('button');
+        if (!el || !P.filters.contains(el) || el.closest('.qz-filtersbar')) return;
+        cancel();
+        target = el; start = { x: e.clientX, y: e.clientY };
+        el.classList.add('pressing');
+        timer = setTimeout(() => {
+            cancel();
+            try { navigator.vibrate && navigator.vibrate(25); } catch {}
+            el.click();
+            swallowUntil = Date.now() + 700;      // the click that ends this press is not a second tap
+            P.openFilters(false);
+            if (P.request || P.aiStarting) P.stopSearch();
+            P.go();
+        }, LONG_PRESS_MS);
+    });
+    P.filters.addEventListener('pointermove', e => {
+        if (timer && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) cancel();
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => P.filters.addEventListener(t, cancel));
+    document.addEventListener('click', e => {
+        if (e.isTrusted && Date.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); swallowUntil = 0; }
+    }, true);
+    P.filters.addEventListener('contextmenu', e => { if (e.target.closest('button')) e.preventDefault(); });
 };
 
 P.openFilters = open => {
@@ -1150,8 +1190,6 @@ P.setAIMode = enabled => {
     P.aiToggle.classList.toggle('active', enabled);
     P.aiToggle.setAttribute('aria-pressed', String(enabled));
     P.swapInput(enabled);
-    if (enabled) P.searchActions.append(P.fsum);
-    else P.searchWrap.after(P.fsum);
     P.showSuggestions([]);
     if (enabled) P.resetFilters();
     P.paintSummary();

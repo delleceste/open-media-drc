@@ -754,9 +754,15 @@ input[type=range] { accent-color: var(--accent); }
 .qz-inputbox { flex: 1; min-width: 0; }
 .qz-inputbox > .qz-input { display: block; width: 100%; box-sizing: border-box; }
 .qz-searchactions { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-start; }
-.qz-filtered .qz-fsum-text, .qz-filtered .qz-fsum-mark { color: var(--yellow); }
-.qz-fsum-toggle { display: flex; align-items: center; gap: .6rem; flex: 1; min-width: 0;
-    border: 0; background: none; padding: 0; text-align: left; font: inherit; cursor: pointer; }
+/* the filters' funnel beside Search; yellow when one is set */
+.qz-searchrow:not(:has(textarea)) .qz-searchactions { flex-direction: row; gap: .5rem; }
+.qz-fsum, .qz-searchrow:has(textarea) .qz-fsum { display: flex; width: auto; min-height: 0; margin: 0; padding: 0; }
+.btn.qz-fsum-toggle { display: inline-flex; align-items: center; justify-content: center; min-width: 2.8rem; padding: 0 .5rem; }
+.btn.qz-fsum-toggle .ticon { width: 1.35rem; height: 1.35rem; }
+.qz-filtered .btn.qz-fsum-toggle { color: var(--yellow); border-color: var(--yellow); }
+.qz-filtersbar { grid-column: 1 / -1; display: flex; align-items: center; gap: .5rem; width: 100%; margin: .45rem 0 .3rem; }
+.qz-filtersbar .qz-fsum-text { flex: 1; }
+.qz-filters .pressing { transform: scale(.94); transition: transform .45s; }
 .btn.qz-filter-apply { flex: 0 0 auto; min-height: 2.8rem; padding: 0 .8rem; white-space: nowrap; }
 .btn.qz-filter-clear { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 2.8rem;
     width: 2.8rem; min-width: 2.8rem; height: 2.8rem; min-height: 2.8rem; padding: 0; box-sizing: border-box; }
@@ -765,8 +771,6 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-searchrow:has(textarea) .qz-modeactions { align-self: stretch; justify-content: space-between; }
 .qz-searchrow:has(textarea) .qz-text-clear { display: inline-flex; }
 .qz-searchrow:has(textarea) .qz-searchactions { align-self: stretch; justify-content: space-between; }
-.qz-searchrow:has(textarea) .qz-fsum { width: auto; min-height: 2.8rem; margin: 0; padding: 0; }
-.qz-searchrow:has(textarea) .qz-fsum-text { display: none; }
 .qz-go, .qz-ai-toggle { flex: 0 0 auto; padding-inline: .6rem; }
 .qz-go { display: inline-flex; align-items: center; justify-content: center; }
 .qz-ai-sheet label { display: grid; gap: .3rem; margin: .8rem 0; }
