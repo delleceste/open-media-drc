@@ -60,10 +60,12 @@ B.stop = albumId => {
 
 // ── the chip ─────────────────────────────────────────────────────────────────
 // B.chip() → { el, show(albumId, title) }: hidden unless the album has a booklet.
-B.chip = () => {
+// { icon: true }: a line-drawn book alone, no word (the Now page, short of height)
+B.chip = ({ icon = false } = {}) => {
     let albumId = '', title = '', booklets = [], token = 0;
-    const open = h('button', { type: 'button', class: 'chip bk-open', title: 'Open the booklet (PDF)',
-        onclick: () => booklets[0] && K.openExternal(booklets[0].url) }, h('span', { 'aria-hidden': 'true' }, '📖'), ' Booklet');
+    const open = h('button', { type: 'button', class: 'chip bk-open', title: 'Open the booklet (PDF)', 'aria-label': 'Open the booklet',
+        onclick: () => booklets[0] && K.openExternal(booklets[0].url) },
+        ...(icon ? [K.tIcon('book')] : [h('span', { 'aria-hidden': 'true' }, '📖'), ' Booklet']));
     const more = h('button', { type: 'button', class: 'chip bk-more', title: 'Booklet: PDF and AI summary',
         'aria-label': 'Booklet options', 'aria-haspopup': 'menu', onclick: () => B.menu(more, albumId, title, booklets) },
         h('span', { class: 'bk-caret', 'aria-hidden': 'true' }, '▾'));

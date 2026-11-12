@@ -38,6 +38,11 @@ const SHAPES = {
         ['path', { d: 'M9.6 19.2 Q12 16.2 14.4 19.2 Z', fill: 'currentColor', 'stroke-width': 1 }]],
     grid: [['rect', { x: 4, y: 4, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 4, width: 6.5, height: 6.5, rx: 1 }],
         ['rect', { x: 4, y: 13.5, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 13.5, width: 6.5, height: 6.5, rx: 1 }]],
+    // a closed book: the album's booklet (icon-only chip on Now)
+    book: [['path', { d: 'M6 18.5 V5.5 A1.5 1.5 0 0 1 7.5 4 H18.5 V17 H7.5 A1.5 1.5 0 0 0 6 18.5 A1.5 1.5 0 0 0 7.5 20 H18.5 V17' }],
+        ['path', { d: 'M9.5 8 H15.5' }]],
+    // three dots: more about this
+    dots: [['circle', { cx: 5.5, cy: 12, r: 1.2 }], ['circle', { cx: 12, cy: 12, r: 1.2 }], ['circle', { cx: 18.5, cy: 12, r: 1.2 }]],
     list: [['rect', { x: 3.5, y: 5, width: 4.5, height: 4.5, rx: .8 }], ['rect', { x: 3.5, y: 14.5, width: 4.5, height: 4.5, rx: .8 }],
         ['path', { d: 'M11 6.5 H20.5 M11 9 H17 M11 16 H20.5 M11 18.5 H17' }]],
 };
