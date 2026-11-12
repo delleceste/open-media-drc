@@ -1500,12 +1500,14 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .now-booklet { display: none; }
 .now-acts { display: none; }
 @media (orientation: portrait) {
-    .now-acts { display: flex; order: 4; align-items: center; gap: .35rem; flex-wrap: wrap; }
+    /* one line even beside the cover on a narrow phone (about 115 px there): no wrapping */
+    .now-acts { display: flex; order: 4; align-items: center; gap: .25rem; flex-wrap: nowrap; }
     .now-acts:not(:has(> :not([hidden]))) { display: none; }
     .now.roomy .now-acts { justify-content: center; }
     .now-acts > .chip, .now-acts > .bk-split { margin-top: 0 !important; }
-    .now-acts .chip.now-icon:not([hidden]), .bk-split.now-booklet .chip.bk-open { min-width: 2.2rem; padding: .1rem .45rem; justify-content: center; }
-    .now-acts .ticon { width: 1.05rem; height: 1.05rem; }
+    .now-acts .chip.now-icon:not([hidden]), .bk-split.now-booklet .chip.bk-open { min-width: 2rem; padding: .1rem .3rem; justify-content: center; }
+    .bk-split.now-booklet .chip.bk-more { min-width: 1.3rem; padding: 0 .2rem; }
+    .now-acts .ticon { width: 1.15rem; height: 1.15rem; }
     .now-acts .chip.now-fav.now-icon { font-size: .95rem; line-height: 1; }
     .now-acts > .bk-split.now-booklet:not([hidden]) { order: 6; }      /* after the heart, beside Details */
     .bk-split.now-booklet:not([hidden]) { display: inline-flex; order: 4; align-self: flex-start; margin-top: .1rem; }

@@ -38,9 +38,9 @@ const SHAPES = {
         ['path', { d: 'M9.6 19.2 Q12 16.2 14.4 19.2 Z', fill: 'currentColor', 'stroke-width': 1 }]],
     grid: [['rect', { x: 4, y: 4, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 4, width: 6.5, height: 6.5, rx: 1 }],
         ['rect', { x: 4, y: 13.5, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 13.5, width: 6.5, height: 6.5, rx: 1 }]],
-    // a closed book: the album's booklet (icon-only chip on Now)
-    book: [['path', { d: 'M6 18.5 V5.5 A1.5 1.5 0 0 1 7.5 4 H18.5 V17 H7.5 A1.5 1.5 0 0 0 6 18.5 A1.5 1.5 0 0 0 7.5 20 H18.5 V17' }],
-        ['path', { d: 'M9.5 8 H15.5' }]],
+    // an open book: the album's booklet (icon-only chip on Now)
+    book: [['path', { d: 'M12 6.5 C10 5 7 4.6 3 5.2 V18.6 C7 18 10 18.4 12 19.8 C14 18.4 17 18 21 18.6 V5.2 C17 4.6 14 5 12 6.5 Z M12 6.5 V19.8' }],
+        ['path', { d: 'M5.8 9 C7.3 8.8 8.6 9 9.6 9.5 M5.8 12.2 C7.3 12 8.6 12.2 9.6 12.7 M14.4 9.5 C15.4 9 16.7 8.8 18.2 9 M14.4 12.7 C15.4 12.2 16.7 12 18.2 12.2', 'stroke-width': 1.3 }]],
     // three dots: more about this
     dots: [['circle', { cx: 5.5, cy: 12, r: 1.2 }], ['circle', { cx: 12, cy: 12, r: 1.2 }], ['circle', { cx: 18.5, cy: 12, r: 1.2 }]],
     list: [['rect', { x: 3.5, y: 5, width: 4.5, height: 4.5, rx: .8 }], ['rect', { x: 3.5, y: 14.5, width: 4.5, height: 4.5, rx: .8 }],
