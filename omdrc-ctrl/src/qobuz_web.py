@@ -992,6 +992,57 @@ def start_scan(split_cue: bool = False) -> tuple[bool | None, str]:
     return True, "MPD database updated; DR14 scan started"
 
 
+# Local albums without art: the cover Qobuz has for them, looked up once per album
+# and remembered (a miss for a week), so a search does not ask Qobuz again.
+COVER_FILE = "qobuz-local-covers.json"
+COVER_LIMIT = 3000
+COVER_MISS_TTL = 7 * 86400
+_covers: dict | None = None
+_covers_lock = threading.Lock()
+
+
+def _covers_path() -> str:
+    return os.path.join(_state_dir(), COVER_FILE) if _state_dir() else ""
+
+
+def _qobuz_cover(artist: str, album: str) -> str:
+    global _covers
+    artist, album = artist.strip()[:300], album.strip()[:300]
+    if not album:
+        return ""
+    key = f"{artist.casefold()}\0{album.casefold()}"
+    with _covers_lock:
+        if _covers is None:
+            try:
+                with open(_covers_path(), encoding="utf-8") as f:
+                    _covers = dict(json.load(f))
+            except (OSError, ValueError, TypeError):
+                _covers = {}
+        hit = _covers.get(key)
+    if isinstance(hit, dict) and (hit.get("url") or time.time() - float(hit.get("at", 0)) < COVER_MISS_TTL):
+        return str(hit.get("url") or "")
+    try:
+        if not _settings().enabled:
+            return ""
+        url = catalog().cover_for(artist, album)
+    except QobuzError:
+        return ""                                  # offline or signed out: asked again next time
+    with _covers_lock:
+        _covers[key] = {"url": url, "at": int(time.time())}
+        while len(_covers) > COVER_LIMIT:
+            _covers.pop(next(iter(_covers)))
+        path = _covers_path()
+        if path:
+            try:
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(_covers, f, separators=(",", ":"))
+                os.replace(tmp, path)
+            except OSError:
+                pass
+    return url
+
+
 @bp.route("/local/art")
 def local_art():
     """Serve MPD's albumart binary response for one indexed library track."""
@@ -1006,6 +1057,11 @@ def local_art():
                         headers={"Cache-Control": "public, max-age=86400"})
     except (mpd_library.MPDError, OSError) as error:
         status = 404 if "not found" in str(error).lower() or "no file exists" in str(error).lower() else 503
+        # none in the folder nor in the file: the same album's cover on Qobuz, if found
+        if status == 404:
+            found = _qobuz_cover(request.args.get("artist", ""), request.args.get("album", ""))
+            if found:
+                return Response(status=302, headers={"Location": found, "Cache-Control": "public, max-age=86400"})
         # Never let a temporary MPD miss poison this stable artwork URL: the
         # browser can otherwise keep showing a broken image after a reload.
         return Response(status=status, headers={"Cache-Control": "no-store"})

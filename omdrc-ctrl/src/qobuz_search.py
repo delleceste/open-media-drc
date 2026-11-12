@@ -37,6 +37,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -217,6 +218,34 @@ def album_date(item: dict) -> str:
 
 def _name(obj) -> str:
     return (obj or {}).get("name", "") if isinstance(obj, dict) else ""
+
+
+_COVER_SKIP = {"the", "a", "an", "and", "of", "in", "on", "for", "de", "la", "le", "les", "des", "der",
+               "die", "das", "und", "et", "cd", "disc", "vol", "remastered", "remaster", "edition",
+               "deluxe", "version", "hd", "hi", "res", "24", "bit", "flac"}
+
+
+def _cover_words(text: str) -> set[str]:
+    plain = unicodedata.normalize("NFKD", text or "")
+    plain = "".join(c for c in plain if not unicodedata.combining(c)).casefold()
+    return {w for w in re.findall(r"[a-z0-9]+", plain) if w not in _COVER_SKIP}
+
+
+def cover_match(title: set[str], names: set[str], card: dict) -> float:
+    """How well a Qobuz card stands for a local album (0: not at all).  Most of
+    the local title's words in the card's title, and, with an artist known, one
+    of the artist's names among the card's artist, composer and title."""
+    shown = _cover_words(f"{card.get('title', '')} {card.get('version', '')}")
+    share = len(title & shown) / len(title)
+    if share < (0.6 if names else 1.0):
+        return 0.0
+    if names:
+        people = _cover_words(f"{card.get('artist', '')} {card.get('composer', '')} {card.get('title', '')}")
+        hits = len(names & people)
+        if not hits:
+            return 0.0
+        return share * 10 + min(hits, 3)
+    return share * 10
 
 
 def album_card(item: dict) -> dict:
@@ -1579,6 +1608,36 @@ class QobuzCatalog:
             return qobuz
         self.awarded.seen(card, qobuz)
         return self.awarded.merged(card["id"], qobuz)
+
+    def cover_for(self, artist: str, album: str) -> str:
+        """A cover for a local album that has none: the image of the Qobuz album
+        whose title holds most of this one's words, by the same artist ("" when
+        nothing is close enough).  Artist and title together first, then the
+        title alone (Qobuz wants every word of a query; tags spell names their own way)."""
+        title = _cover_words(album)
+        if not title:
+            return ""
+        various = not artist.strip() or re.match(r"(?i)\s*(various|va\b)", artist)
+        names = set() if various else {w for w in _cover_words(artist) if len(w) >= 3}
+        # a long credit ("Le Concert des Nations, Direction: Jordi Savall") hides the album
+        # from a query wanting all its words: the first name's surname alone next
+        lead = "" if various else (re.split(r"[,;/&]", artist)[0].split() or [""])[-1]
+        queries = [f"{'' if various else artist} {album}".strip()[:180],
+                   f"{lead} {album}".strip()[:180], album.strip()[:180]]
+        for query in dict.fromkeys(q for q in queries if q):
+            items, _total = self._page(query, 0)
+            best, best_score = None, 0.0
+            for item in items[:30]:
+                card = album_card(item)
+                image = card.get("image_large") or card.get("image")
+                if not image:
+                    continue
+                score = cover_match(title, names, card)
+                if score > best_score:
+                    best, best_score = image, score
+            if best:
+                return best
+        return ""
 
     def album(self, album_id: str) -> dict:
         """One album with its tracks, performers and description."""

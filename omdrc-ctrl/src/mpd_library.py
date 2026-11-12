@@ -142,7 +142,8 @@ def search(text: str, limit: int = 5000) -> list[dict]:
         if "dr" not in card:
             card["dr"] = _dr14_average(t["file"])
         if not card["image"]:
-            art_url = "/qobuz/local/art?file=" + urllib.parse.quote(t["file"], safe="")
+            # artist and album: for a cover from Qobuz when the files have none (qobuz_web)
+            art_url = "/qobuz/local/art?" + urllib.parse.urlencode({"file": t["file"], "artist": artist, "album": album})
             card["image"] = card["image_large"] = art_url
         card["track_count"] += 1
     return list(albums.values())

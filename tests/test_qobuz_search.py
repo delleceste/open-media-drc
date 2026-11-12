@@ -12,6 +12,7 @@ import datetime as dt
 import importlib.util
 from pathlib import Path
 import sys
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -874,6 +875,34 @@ class PanelTest(unittest.TestCase):
             response = self.client.get("/qobuz/local/art?file=Music%2FAlbum%2Ftrack.flac")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_local_art_falls_back_to_the_qobuz_cover(self):
+        """No art in the folder nor the file: the Qobuz cover of the same album,
+        looked up once and remembered."""
+        item = {"id": "q1", "title": "Symphony No. 6 \u201cPath\u00e9tique\u201d", "artist": {"name": "Manfred Honeck"},
+                "label": {"name": "Reference Recordings", "id": 5}, "image": {"large": "https://img/q1.jpg"}}
+        cat, calls = catalog({"Honeck Symphony No. 6 Pathetique": [item]})
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(qobuz_web, "_state_dir", lambda: tmp), patch.object(qobuz_web, "_covers", None), \
+                patch.object(qobuz_web, "catalog", return_value=cat), \
+                patch.object(qobuz_web.mpd_library, "albumart",
+                             side_effect=qobuz_web.mpd_library.MPDError("ACK {albumart} No file exists")):
+            url = "/qobuz/local/art?file=a%2Ft.flac&artist=Honeck&album=Symphony+No.+6+Pathetique"
+            first = self.client.get(url)
+            second = self.client.get(url)
+            other = self.client.get("/qobuz/local/art?file=a%2Ft.flac&artist=Karajan&album=Symphony+No.+6+Pathetique")
+            self.assertTrue(os.path.exists(os.path.join(tmp, qobuz_web.COVER_FILE)))
+        self.assertEqual((first.status_code, first.headers["Location"]), (302, "https://img/q1.jpg"))
+        self.assertEqual(second.headers["Location"], "https://img/q1.jpg")
+        self.assertEqual(other.status_code, 404, "another conductor's recording is not this album")
+        self.assertEqual(sum(1 for c in calls if c[1]["query"].startswith("Honeck")), 1, "the answer is remembered")
+
+    def test_cover_match_wants_the_title_and_the_artist(self):
+        title, names = qs._cover_words("Rusalka Fantasy"), {"honeck"}
+        card = {"title": "Tchaikovsky: Symphony No. 6 - Dvo\u0159\u00e1k: Rusalka Fantasy", "artist": "Manfred Honeck"}
+        self.assertGreater(qs.cover_match(title, names, card), 0)
+        self.assertEqual(qs.cover_match(title, {"karajan"}, card), 0)
+        self.assertEqual(qs.cover_match(qs._cover_words("Swan Lake"), names, card), 0)
 
     def test_a_bad_number_is_an_error_not_a_crash(self):
         cat, _ = catalog({})
