@@ -37,6 +37,27 @@ class FreeBSDAudioLifecycleTests(unittest.TestCase):
         )
         self.assertNotIn("service musicpd", text)
 
+    def test_dac_mixer_levels_are_set_on_every_attach_only_when_asked(self):
+        for path in (RUN_FROM_REPO, PORT_TEMPLATE):
+            with self.subTest(path=path.name):
+                text = path.read_text()
+                self.assertIn(': ${omdrc_audio_dac_mixer:=""}', text)
+                self.assertIn("\taudio_apply_knobs\n\taudio_apply_mixer\n", text)
+                func = re.search(r"^audio_apply_mixer\(\)\n\{\n.*?^\}\n",
+                                 text, re.M | re.S).group(0)
+                with tempfile.TemporaryDirectory() as tmp:
+                    log = Path(tmp) / "mixer.log"
+                    fake = Path(tmp) / "mixer"
+                    fake.write_text(f"#!/bin/sh\necho \"$*\" >> {log}\n")
+                    fake.chmod(0o755)
+                    script = (f"name=omdrc_audio; MIXER={fake}; DAC_UNIT=3\n"
+                              "warn() { echo \"$*\" >&2; }\n" + func +
+                              "omdrc_audio_dac_mixer=''; audio_apply_mixer\n"
+                              "omdrc_audio_dac_mixer='vol=1.0 pcm=1.0'; audio_apply_mixer\n")
+                    subprocess.run(["/bin/sh", "-c", script], check=True)
+                    self.assertEqual(log.read_text().splitlines(),
+                                     ["-f /dev/mixer3 vol=1.0", "-f /dev/mixer3 pcm=1.0"])
+
     def test_both_audio_templates_verify_dynamic_default_unit(self):
         for path in (RUN_FROM_REPO, PORT_TEMPLATE):
             with self.subTest(path=path):

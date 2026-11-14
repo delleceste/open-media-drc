@@ -131,6 +131,12 @@ load_rc_config "$name"
 # device-specific ones here (e.g. mixer.vol_0.val=0 to park a DAC at 0 dB).
 : ${omdrc_audio_dac_sysctls:="${omdrc_sndlink_dac_sysctls:-bitperfect=1 play.vchans=0}"}
 : ${omdrc_audio_capture_sysctls:="${omdrc_sndlink_capture_sysctls:-bitperfect=1 rec.vchans=0}"}
+# mixer(8) levels for the DAC, set on every attach the way the sysctls are:
+# "vol=1.0 pcm=1.0" keeps a shared (vchans) DAC at full scale across boots and
+# replugs, where mixer levels are not kept.  Empty (the default) leaves the
+# mixer alone: on a DAC with a hardware volume "vol" IS that volume, and the
+# panel may be driving it.
+: ${omdrc_audio_dac_mixer:=""}
 # Recording source to select on the capture card: "auto" picks its digital
 # input if it has one, "none" leaves the card alone, or name a mixer device
 # ("line" for the analog input).  See audio_apply_recsrc.
@@ -491,6 +497,18 @@ audio_apply_knobs()
 # collide.  Only devices the card actually offers as a recording source are
 # considered -- mixer(8) tags those "rec" -- so a card without a digital input
 # is left alone rather than being switched to something arbitrary.
+# omdrc_audio_dac_mixer, one control=value at a time so a control this card
+# does not have is reported and the others still apply.
+audio_apply_mixer()
+{
+	[ -n "${DAC_UNIT}" ] && [ -n "${omdrc_audio_dac_mixer}" ] || return 0
+	[ -x "${MIXER}" ] || return 0
+	for _sl_kv in ${omdrc_audio_dac_mixer}; do
+		${MIXER} -f "/dev/mixer${DAC_UNIT}" "${_sl_kv}" >/dev/null 2>&1 ||
+		    warn "${name}: mixer ${_sl_kv} on /dev/mixer${DAC_UNIT} failed"
+	done
+}
+
 audio_apply_recsrc()
 {
 	[ -n "${CAPTURE_UNIT}" ] || return 0
@@ -574,6 +592,7 @@ omdrc_audio_roles()
 	audio_link dac "${DAC_UNIT}"
 	audio_link capture "${CAPTURE_UNIT}"
 	audio_apply_knobs
+	audio_apply_mixer
 	audio_apply_recsrc
 	audio_report_guess
 	audio_publish
