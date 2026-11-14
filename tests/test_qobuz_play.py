@@ -185,6 +185,23 @@ class DiscoveryTest(unittest.TestCase):
                       {"10.0.0.5", "127.0.0.1"}, name="BOX")
         self.assertEqual(r.name, "box")
 
+    def test_local_addresses_come_from_ip_or_ifconfig(self):
+        from unittest import mock
+        outputs = {
+            "ip": "1: lo    inet 127.0.0.1/8 scope host lo\n"
+                  "3: wlan0    inet 192.168.1.138/24 brd 192.168.1.255\n",
+            "ifconfig": "lo0: flags=8049<UP>\n\tinet 127.0.0.1 netmask 0xff000000\n"
+                        "tun0: flags=8051<UP>\n\tinet 172.20.0.38 --> 172.20.0.37\n",
+        }
+        for tool, expected in (("ip", ["127.0.0.1", "192.168.1.138"]),
+                               ("ifconfig", ["127.0.0.1", "172.20.0.38"])):
+            def run(argv, **_kw):
+                if not argv[0].endswith(tool):
+                    raise FileNotFoundError(argv[0])
+                return mock.Mock(stdout=outputs[tool])
+            with mock.patch.object(openhome.subprocess, "run", run):
+                self.assertEqual(openhome.local_ipv4_addresses(), expected)
+
     def test_loopback_is_local(self):
         self.assertTrue(openhome.is_local_address("127.0.0.1"))
         self.assertFalse(openhome.is_local_address("192.0.2.1"))

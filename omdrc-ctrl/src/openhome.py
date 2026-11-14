@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import re
 import socket
 import struct
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -61,10 +62,35 @@ def is_local_address(host: str) -> bool:
         return False
 
 
-def ssdp_search(st: str = PLAYLIST, timeout: float = 1.5) -> list[str]:
+_INET = re.compile(r"\binet (?:addr:)?(\d+\.\d+\.\d+\.\d+)")
+
+
+def local_ipv4_addresses() -> list[str]:
+    """This machine's IPv4 addresses, loopback included, as `ip` (Linux) or
+    `ifconfig` (FreeBSD) lists them; empty when neither can be run."""
+    for argv in (["ip", "-4", "-o", "addr", "show"], ["ifconfig", "-a"]):
+        for prefix in ("", "/sbin/", "/usr/sbin/"):
+            try:
+                out = subprocess.run([prefix + argv[0], *argv[1:]],
+                                     capture_output=True, text=True,
+                                     timeout=2, check=False).stdout
+            except (OSError, subprocess.SubprocessError):
+                continue
+            addresses = list(dict.fromkeys(_INET.findall(out)))
+            if addresses:
+                return addresses
+    return []
+
+
+def ssdp_search(st: str = PLAYLIST, timeout: float = 1.5,
+                interfaces=local_ipv4_addresses) -> list[str]:
     """The LOCATIONs of the devices answering an M-SEARCH for `st`.  Asked on
-    the default interface and on loopback, so a renderer bound to either is
-    heard; the answers of the same device on both are merged."""
+    the default interface and then out of every local address, so a renderer
+    bound to any of them is heard; the answers of the same device on several
+    are merged.  The default route alone is not enough: a VPN that redirects
+    the gateway (OpenVPN's 0.0.0.0/1 + 128.0.0.0/1) also captures
+    239.255.255.250, and the search would leave through the tunnel while
+    upmpdcli announces itself on the LAN."""
     message = ("M-SEARCH * HTTP/1.1\r\n"
                f"HOST: {SSDP_ADDR[0]}:{SSDP_ADDR[1]}\r\n"
                'MAN: "ssdp:discover"\r\n'
@@ -74,7 +100,7 @@ def ssdp_search(st: str = PLAYLIST, timeout: float = 1.5) -> list[str]:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
         s.settimeout(0.2)
-        for interface in (None, "127.0.0.1"):
+        for interface in [None, *dict.fromkeys([*interfaces(), "127.0.0.1"])]:
             try:
                 if interface:
                     s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
