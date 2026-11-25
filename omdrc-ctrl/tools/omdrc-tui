@@ -1614,10 +1614,12 @@ class App:
         self.colored(screen, 2, 2, "‹ Back  [Esc]", "accent", curses.A_BOLD)
         self.clickable(2, 2, 13, lambda _x, _y, screen: self.action(27, screen))
         self.colored(screen, 3, 2, f"{a.get('title', '')} — {a.get('artist', '')}", "soft", curses.A_BOLD)
-        self.colored(screen, 4, 2, f"{a.get('label', '')} · {a.get('year', '')} · {a.get('technical', '')}",
+        label = "Local collection" if a.get("source") == "local" else a.get("label")
+        metadata = " · ".join(str(value) for value in (label, a.get("year"), a.get("technical")) if value)
+        self.colored(screen, 4, 2, metadata,
                      format_color(a.get("technical")) if a.get("technical") else "muted")
         col = 2
-        for index, (label, color, _) in enumerate(ALBUM_ACTIONS):
+        for index, (label, color, _) in enumerate(self.album_actions()):
             text = ("▸" if index == self.album_action_index else " ") + label
             self.colored(screen, 5, col, text, color,
                          curses.A_BOLD | (curses.A_REVERSE if index == self.album_action_index else 0))
@@ -1640,7 +1642,8 @@ class App:
                 else: lines += textwrap.wrap(clean(value), width) or [""]
         lines.append("Tracks:")
         for n, track in enumerate(a.get("track_list") or [], 1):
-            lines.append(f"{n}. {track.get('title', '')}  {track.get('work', '')}")
+            title = track.get("title") or track.get("file", "")
+            lines.append(f"{n}. {title}  {track.get('work', '')}")
         height = max(0, bottom - 8)
         self.album_scroll = min(self.album_scroll, max(0, len(lines) - height))
         for y, line in enumerate(lines[self.album_scroll:self.album_scroll + height], 7):
@@ -1872,16 +1875,16 @@ class App:
         if self.page == "Library": self.library_key(key, screen)
         elif self.page == "Now": self.now_key(key, screen)
         elif self.page == "Album":
+            actions = self.album_actions()
             if key == 27: self.switch(self.album_source)
             elif key == curses.KEY_UP: self.album_scroll = max(0, self.album_scroll - 1)
             elif key == curses.KEY_DOWN: self.album_scroll += 1
             elif key == curses.KEY_LEFT and self.album_action_index == 0: self.switch(self.album_source)
             elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
-                self.album_action_index = (self.album_action_index + (-1 if key == curses.KEY_LEFT else 1)) % len(ALBUM_ACTIONS)
-            elif key in (10, 13): self.album_key(ord(ALBUM_ACTIONS[self.album_action_index][2]), screen)
-            elif curses.KEY_F5 <= key <= curses.KEY_F9:
-                self.album_action_index = key - curses.KEY_F5
-                self.album_key(ord(ALBUM_ACTIONS[self.album_action_index][2]), screen)
+                self.album_action_index = (self.album_action_index + (-1 if key == curses.KEY_LEFT else 1)) % len(actions)
+            elif key in (10, 13): self.click_album_action(self.album_action_index, screen)
+            elif curses.KEY_F5 <= key < curses.KEY_F5 + len(actions):
+                self.click_album_action(key - curses.KEY_F5, screen)
             else: self.album_key(key, screen)
         elif self.page == "Research":
             if key == 27:
@@ -2100,8 +2103,11 @@ class App:
         elif key == ord("R"): self.start_research()
         elif key == ord("M"): self.submit("measure-start", lambda: self.api.request("/dr/measure", body={}), lambda d: setattr(self, "measure", d.get("job")))
 
+    def album_actions(self):
+        return ALBUM_ACTIONS[:2] if (self.album or {}).get("source") == "local" else ALBUM_ACTIONS
+
     def album_key(self, key, screen):
-        if key == ord("R"): self.start_research()
+        if key == ord("R") and (self.album or {}).get("source") != "local": self.start_research()
         elif key in (ord("p"), ord("a"), ord("h"), ord("b")):
             self.album_action(self.album or {}, key, screen)
 
@@ -2111,19 +2117,35 @@ class App:
 
     def open_album(self, card, source="Library"):
         album_id = str(card.get("id") or "")
-        if not album_id or card.get("local"):
+        if not album_id:
             self.message = "Album details require a Qobuz album"; return
-        self.album_source = source; self.album = card; self.album_scroll = 0; self.album_action_index = 0; self.switch("Album")
-        self.submit("album", lambda: self.api.request("/qobuz/album/" + urllib.parse.quote(album_id)),
-                    lambda d: setattr(self, "album", d["album"]))
+        local = card.get("source") == "local"
+        self.album = {**card, "track_list": card.get("tracks") or []} if local else card
+        self.album_source = source
+        self.album_scroll = self.album_action_index = 0
+        self.switch("Album")
+        if local:
+            return
+
+        def accept(data):
+            if self.album is card:
+                self.album = data["album"]
+        self.submit("album", lambda: self.api.request("/qobuz/album/" + urllib.parse.quote(album_id)), accept)
 
     def album_action(self, card, key, screen):
         album_id = str(card.get("id") or "")
         if not album_id:
             self.message = "A Qobuz album is required"; return
+        local = card.get("source") == "local"
         if key in (ord("p"), ord("a")):
             body = {"album_id": album_id, "mode": "append" if key == ord("a") else "replace"}
-            self.submit("play", lambda: self.api.request("/qobuz/play", body=body), lambda d: setattr(self, "message", "Queued album"))
+            endpoint = "/qobuz/play"
+            if local:
+                endpoint = "/qobuz/local/play"
+                body["tracks"] = card.get("tracks") or []
+            self.submit("play", lambda: self.api.request(endpoint, body=body), lambda d: setattr(self, "message", "Queued album"))
+        elif local:
+            self.message = "This action requires a Qobuz album"
         elif key == ord("h"):
             path = self.prompt(screen, "Favourite folder (blank = Qobuz):").strip()
             body = {"action": "add" if path else "favorite", "album_id": album_id, "path": path}
@@ -2141,7 +2163,9 @@ class App:
             self.message = "Open AI setup: " + url
 
     def start_research(self, force=False):
-        album_id = str((self.album or {}).get("id") or self.qstatus.get("qobuz_album") or "")
+        source = self.research_back if self.page == "Research" else self.page
+        selected_album = self.album if source == "Album" else None
+        album_id = str((selected_album or {}).get("id") or self.qstatus.get("qobuz_album") or "")
         title = self.player.get("album") or self.player.get("title") or ""
         if not title and not album_id:
             self.message = "Nothing playing to research"; return
@@ -2155,7 +2179,7 @@ class App:
         def work():
             settings = self.api.request("/qobuz/ai/settings")
             if not settings.get("configured"): return {"setup_required": True, "settings": settings}
-            album = self.album if self.album and str(self.album.get("id")) == album_id else None
+            album = selected_album
             if not album and album_id:
                 album = self.api.request("/qobuz/album/" + urllib.parse.quote(album_id))["album"]
             album = album or {"title": title, "artist": self.player.get("artist", "")}
@@ -2206,7 +2230,7 @@ class App:
 
     def click_album_action(self, index, screen):
         self.album_action_index = index
-        self.album_key(ord(ALBUM_ACTIONS[index][2]), screen)
+        self.album_key(ord(self.album_actions()[index][2]), screen)
 
     def click_config(self, index, screen):
         self.config_index = index

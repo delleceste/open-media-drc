@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 PATH = Path(__file__).resolve().parents[1] / 'omdrc-ctrl/tools/omdrc-tui'
 spec = importlib.util.spec_from_loader('omdrc_tui', importlib.machinery.SourceFileLoader('omdrc_tui', str(PATH)))
@@ -1442,6 +1442,53 @@ class TuiTest(unittest.TestCase):
             switch.assert_not_called()
             app.action(tui.curses.KEY_LEFT, None)
             switch.assert_called_once_with('Library')
+
+    def test_local_search_result_opens_tracks_and_queues_through_mpd(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 0
+        tracks = [{'file': 'Music/Album/01.flac', 'title': 'First track', 'duration': 123}]
+        card = {'id': 'local:123', 'source': 'local', 'title': 'Album', 'tracks': tracks}
+        app.rows = [card]
+        app.library_sidebar_focus = False
+        app.library_right_index = 2
+
+        def submit(key, work, callback):
+            callback(work())
+
+        with patch.object(app, 'submit', side_effect=submit), \
+                patch.object(app.api, 'request', return_value={'queued': 1}) as request, \
+                patch.object(app, 'prompt') as prompt:
+            app.library_key(10, None)
+            app.library_key(ord('h'), None)
+            app.library_key(ord('b'), None)
+            app.library_key(tui.curses.KEY_RIGHT, None)
+            self.assertEqual(app.page, 'Album')
+            self.assertEqual(app.album['track_list'], tracks)
+            self.assertNotIn('track_list', card)
+            app.action(tui.curses.KEY_F6, None)
+            app.action(tui.curses.KEY_F7, None)
+            app.action(tui.curses.KEY_RIGHT, None)
+            self.assertEqual(app.album_action_index, 0)
+            app.action(tui.curses.KEY_LEFT, None)
+        prompt.assert_not_called()
+        self.assertEqual(request.call_args_list, [
+            call('/qobuz/local/play', body={'album_id': card['id'], 'mode': mode, 'tracks': tracks})
+            for mode in ('replace', 'append')
+        ])
+        self.assertEqual(app.page, 'Library')
+
+    def test_late_qobuz_details_leave_the_open_local_album_in_place(self):
+        app = tui.App('http://localhost:9090')
+        remote = {'id': 'qobuz1', 'title': 'Qobuz album'}
+        local = {'id': 'local:123', 'source': 'local', 'title': 'Local album', 'tracks': []}
+        with patch.object(app, 'submit') as submit:
+            app.open_album(remote)
+            accept = submit.call_args.args[2]
+            app.open_album(local)
+            accept({'album': remote})
+            submit.assert_called_once()
+        self.assertEqual(app.album['id'], local['id'])
 
     def test_mouse_selects_then_opens_results_and_wheel_stays_in_list(self):
         app = tui.App('http://localhost:9090')
